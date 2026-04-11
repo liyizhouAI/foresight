@@ -687,6 +687,28 @@ html[data-theme='dark'][data-theme='dark'] .main-view {
   max-width: none !important;
 }
 
+/* Dark mode layout: override inner container max-width constraints */
+html[data-theme='dark'][data-theme='dark'] .main-content {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+html[data-theme='dark'][data-theme='dark'] .dashboard-section {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+html[data-theme='dark'][data-theme='dark'] .content-area,
+html[data-theme='dark'][data-theme='dark'] .main-content-area {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+html[data-theme='dark'][data-theme='dark'] .panel-wrapper.left,
+html[data-theme='dark'][data-theme='dark'] .panel-wrapper.right {
+  max-width: none !important;
+}
+
 @media (max-width: 768px) {
   .theme-toggle {
     width: 16px;
