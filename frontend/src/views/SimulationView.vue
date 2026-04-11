@@ -3,7 +3,13 @@
     <!-- Header -->
     <header class="app-header">
       <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
+        <div class="brand" @click="router.push('/')">
+          <span class="brand-mark">
+            <span class="brand-mark-en">foresight</span>
+            <span class="brand-mark-sep">　</span>
+            <span class="brand-mark-zh">先见之明</span>
+          </span>
+        </div>
       </div>
       
       <div class="header-center">

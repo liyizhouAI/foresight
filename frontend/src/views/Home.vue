@@ -2,10 +2,19 @@
   <div class="home-container">
     <!-- 顶部导航栏 -->
     <nav class="navbar">
-      <div class="nav-brand">MIROFISH</div>
+      <div class="nav-brand-wrap">
+        <div class="nav-brand">
+          <span class="brand-mark">
+            <span class="brand-mark-en">foresight</span>
+            <span class="brand-mark-sep">　</span>
+            <span class="brand-mark-zh">先见之明</span>
+          </span>
+        </div>
+        <div class="theme-toggle-slot" id="theme-toggle-anchor"></div>
+      </div>
       <div class="nav-links">
         <LanguageSwitcher />
-        <a href="https://github.com/666ghj/MiroFish" target="_blank" class="github-link">
+        <a href="https://github.com/liyizhouAI/foresight" target="_blank" class="github-link">
           {{ $t('nav.visitGithub') }} <span class="arrow">↗</span>
         </a>
       </div>
@@ -44,7 +53,7 @@
         <div class="hero-right">
           <!-- Logo 区域 -->
           <div class="logo-container">
-            <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" class="hero-logo" />
+            <img src="../assets/logo/foresight_logo.jpeg" alt="Foresight 先见之明 Logo" class="hero-logo" />
           </div>
           
           <button class="scroll-down-btn" @click="scrollToBottom">
@@ -347,11 +356,26 @@ const startSimulation = () => {
   padding: 0 40px;
 }
 
+.nav-brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
 .nav-brand {
   font-family: var(--font-mono);
   font-weight: 800;
   letter-spacing: 1px;
   font-size: 1.2rem;
+}
+
+.theme-toggle-slot {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .nav-links {

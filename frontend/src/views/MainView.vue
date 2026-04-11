@@ -3,7 +3,14 @@
     <!-- Header -->
     <header class="app-header">
       <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH</div>
+        <div class="brand" @click="router.push('/')">
+          <span class="brand-mark">
+            <span class="brand-mark-en">foresight</span>
+            <span class="brand-mark-sep">　</span>
+            <span class="brand-mark-zh">先见之明</span>
+          </span>
+        </div>
+        <div class="theme-toggle-slot" id="theme-toggle-anchor"></div>
       </div>
       
       <div class="header-center">
@@ -438,12 +445,27 @@ onUnmounted(() => {
   transform: translateX(-50%);
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
 .brand {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 800;
   font-size: 18px;
   letter-spacing: 1px;
   cursor: pointer;
+}
+
+.theme-toggle-slot {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .view-switcher {

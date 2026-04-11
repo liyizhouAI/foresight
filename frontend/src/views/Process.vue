@@ -2,7 +2,16 @@
   <div class="process-page">
     <!-- 顶部导航栏 -->
     <nav class="navbar">
-      <div class="nav-brand" @click="goHome">MIROFISH</div>
+      <div class="nav-brand-wrap">
+        <div class="nav-brand" @click="goHome">
+          <span class="brand-mark">
+            <span class="brand-mark-en">foresight</span>
+            <span class="brand-mark-sep">　</span>
+            <span class="brand-mark-zh">先见之明</span>
+          </span>
+        </div>
+        <div class="theme-toggle-slot" id="theme-toggle-anchor"></div>
+      </div>
       
       <!-- 中间步骤指示器 -->
       <div class="nav-center">
@@ -1121,6 +1130,12 @@ onUnmounted(() => {
   position: relative;
 }
 
+.nav-brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
 .nav-brand {
   font-size: 1rem;
   font-weight: 700;
@@ -1131,6 +1146,15 @@ onUnmounted(() => {
 
 .nav-brand:hover {
   opacity: 0.8;
+}
+
+.theme-toggle-slot {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .nav-center {
