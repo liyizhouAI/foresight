@@ -424,7 +424,7 @@ def build_graph():
                 
                 # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
                 def add_progress_callback(msg, progress_ratio):
-                    progress = 15 + int(progress_ratio * 40)  # 15% - 55%
+                    progress = 15 + int(progress_ratio * 75)  # 15% - 90%
                     task_manager.update_task(
                         task_id,
                         message=msg,

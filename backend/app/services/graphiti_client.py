@@ -267,14 +267,17 @@ class GraphitiClient:
         edge_types: Optional[Dict] = None,
         progress_callback=None,
     ):
-        """Add multiple text episodes sequentially (Graphiti processes one at a time)."""
+        """Add multiple text episodes sequentially with real-time progress."""
         total = len(texts)
+        import time as _time
         for i, text in enumerate(texts):
+            # Report progress BEFORE processing (so user sees "正在处理 2/5...")
             if progress_callback:
                 progress_callback(
-                    f"Processing episode {i + 1}/{total}",
-                    (i + 1) / total,
+                    f"正在处理第 {i + 1}/{total} 个文本块（Graphiti 实体提取中...）",
+                    i / total,
                 )
+            start = _time.time()
             try:
                 self.add_episode(
                     graph_id, text, source_description,
@@ -283,9 +286,18 @@ class GraphitiClient:
             except Exception as e:
                 logger.error(f"Failed to add episode {i + 1}/{total}: {e}")
                 raise
+            elapsed = _time.time() - start
+            logger.info(f"Episode {i + 1}/{total} processed in {elapsed:.1f}s")
+
+            # Report completion of this episode
+            if progress_callback:
+                progress_callback(
+                    f"第 {i + 1}/{total} 个文本块处理完成（用时 {elapsed:.0f}s）",
+                    (i + 1) / total,
+                )
             # Small delay to avoid rate limiting
             if i < total - 1:
-                time.sleep(0.5)
+                _time.sleep(0.3)
 
     # ========== Search ==========
 
