@@ -159,21 +159,30 @@ class GraphitiClient:
         from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
         from graphiti_core.llm_client.config import LLMConfig
 
+        # Use SiliconFlow LLM for Graphiti (better structured output support)
+        graphiti_api_key = Config.GRAPHITI_LLM_API_KEY or Config.LLM_API_KEY
+        graphiti_base_url = Config.GRAPHITI_LLM_BASE_URL or Config.LLM_BASE_URL
+        graphiti_model = Config.GRAPHITI_LLM_MODEL or Config.LLM_MODEL_NAME
+
         llm_config = LLMConfig(
-            api_key=Config.LLM_API_KEY,
-            model=Config.LLM_MODEL_NAME,
-            small_model=Config.LLM_MODEL_NAME,
-            base_url=Config.LLM_BASE_URL,
+            api_key=graphiti_api_key,
+            model=graphiti_model,
+            small_model=graphiti_model,
+            base_url=graphiti_base_url,
         )
         llm_client = OpenAIGenericClient(config=llm_config)
 
-        # Embedder: custom MiniMax embedder (their API uses 'texts' not 'input')
-        embedder = MiniMaxEmbedder(
-            api_key=Config.LLM_API_KEY,
-            base_url=Config.LLM_BASE_URL,
+        # Embedder: SiliconFlow free BAAI/bge-m3 (OpenAI-compatible)
+        from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+        embedder_config = OpenAIEmbedderConfig(
+            api_key=Config.EMBEDDING_API_KEY or Config.LLM_API_KEY,
+            base_url=Config.EMBEDDING_BASE_URL or "https://api.siliconflow.cn/v1",
+            embedding_model=Config.EMBEDDING_MODEL or "BAAI/bge-m3",
+            embedding_dim=1024,
         )
+        embedder = OpenAIEmbedder(config=embedder_config)
 
-        # Reranker: use the same LLM config (MiniMax-compatible)
+        # Reranker: use the LLM config (MiniMax)
         from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
         reranker = OpenAIRerankerClient(config=llm_config)
 

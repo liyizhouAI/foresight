@@ -37,6 +37,16 @@ class Config:
     NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
     NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', 'foresight2026')
 
+    # Graphiti LLM 配置（SiliconFlow，用于图谱构建的 structured output）
+    GRAPHITI_LLM_API_KEY = os.environ.get('GRAPHITI_LLM_API_KEY')
+    GRAPHITI_LLM_BASE_URL = os.environ.get('GRAPHITI_LLM_BASE_URL', 'https://api.siliconflow.cn/v1')
+    GRAPHITI_LLM_MODEL = os.environ.get('GRAPHITI_LLM_MODEL', 'Qwen/Qwen2.5-7B-Instruct')
+
+    # Embedding 配置（SiliconFlow 免费 BAAI/bge-m3）
+    EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY')
+    EMBEDDING_BASE_URL = os.environ.get('EMBEDDING_BASE_URL', 'https://api.siliconflow.cn/v1')
+    EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'BAAI/bge-m3')
+
     # 兼容旧配置：ZEP_API_KEY 不再需要
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY', 'deprecated')
     
