@@ -12,11 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from queue import Queue, Empty
 
-from zep_cloud.client import Zep
-
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
+from .graphiti_client import GraphitiClient
 
 logger = get_logger('foresight.zep_graph_memory_updater')
 
@@ -238,12 +237,7 @@ class ZepGraphMemoryUpdater:
             api_key: Zep API Key（可选，默认从配置读取）
         """
         self.graph_id = graph_id
-        self.api_key = api_key or Config.ZEP_API_KEY
-        
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+        self.client = GraphitiClient.get_instance()
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -411,10 +405,10 @@ class ZepGraphMemoryUpdater:
         # 带重试的发送
         for attempt in range(self.MAX_RETRIES):
             try:
-                self.client.graph.add(
+                self.client.add_episode(
                     graph_id=self.graph_id,
-                    type="text",
-                    data=combined_text
+                    text=combined_text,
+                    source_description=f"simulation_{platform}_activity",
                 )
                 
                 self._total_sent += 1
