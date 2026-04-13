@@ -216,7 +216,12 @@
           <!-- 错误状态 -->
           <div v-else-if="error" class="graph-error">
             <span class="error-icon">⚠</span>
-            <p>{{ error }}</p>
+            <p class="error-main">{{ error }}</p>
+            <div class="error-actions">
+              <p class="error-hint">请尝试以下操作：</p>
+              <button class="retry-btn" @click="retryFromError">🔄 重新开始</button>
+              <button class="retry-btn secondary" @click="goHome">🏠 返回首页</button>
+            </div>
           </div>
         </div>
         
@@ -573,12 +578,23 @@ const initProject = async () => {
   }
 }
 
+// 错误恢复操作
+const retryFromError = () => {
+  error.value = ''
+  router.push({ name: 'Home' })
+}
+
+const goHome = () => {
+  error.value = ''
+  router.push({ name: 'Home' })
+}
+
 // 处理新建项目 - 调用 ontology/generate API
 const handleNewProject = async () => {
   const pending = getPendingUpload()
   
   if (!pending.isPending || pending.files.length === 0) {
-    error.value = '没有待上传的文件，请返回首页重新操作'
+    error.value = '没有待上传的文件。页面刷新后文件会丢失，请返回首页重新上传文档。'
     loading.value = false
     return
   }
@@ -621,7 +637,13 @@ const handleNewProject = async () => {
     }
   } catch (err) {
     console.error('Handle new project error:', err)
-    error.value = '项目初始化失败: ' + (err.message || '未知错误')
+    if (err.message === 'Network Error') {
+      error.value = '网络连接失败：无法连接到后端服务器。请检查网络连接，或返回首页重试。'
+    } else if (err.code === 'ECONNABORTED') {
+      error.value = '请求超时：本体生成耗时过长。请返回首页重新提交，或稍后再试。'
+    } else {
+      error.value = '项目初始化失败: ' + (err.message || '未知错误') + '。请返回首页重试。'
+    }
   } finally {
     loading.value = false
   }
@@ -1350,6 +1372,50 @@ onUnmounted(() => {
   left: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
+  max-width: 400px;
+  padding: 24px;
+}
+
+.graph-error .error-main {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  color: var(--ui-text);
+}
+
+.graph-error .error-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph-error .error-hint {
+  font-size: 12px;
+  color: var(--ui-muted);
+  margin-bottom: 4px;
+}
+
+.graph-error .retry-btn {
+  padding: 8px 20px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  cursor: pointer;
+  font-size: 13px;
+  width: 180px;
+  transition: all 0.2s;
+}
+
+.graph-error .retry-btn:hover {
+  background: var(--ui-surface-strong);
+}
+
+.graph-error .retry-btn.secondary {
+  background: transparent;
+  border-color: var(--ui-border);
+  color: var(--ui-muted);
 }
 
 .loading-animation {
