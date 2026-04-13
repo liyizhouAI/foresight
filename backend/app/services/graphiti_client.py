@@ -19,6 +19,51 @@ from ..utils.logger import get_logger
 
 logger = get_logger('foresight.graphiti_client')
 
+
+from graphiti_core.embedder.client import EmbedderClient
+
+
+class MiniMaxEmbedder(EmbedderClient):
+    """
+    Custom embedder for MiniMax API.
+    Implements Graphiti's EmbedderClient interface.
+    MiniMax uses 'texts' field instead of OpenAI's 'input' field.
+    """
+
+    def __init__(self, api_key: str, base_url: str = "https://api.minimax.chat/v1"):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+
+    async def _call_api(self, texts: list[str]) -> list[list[float]]:
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{self.base_url}/embeddings",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": "embo-01", "texts": texts, "type": "db"},
+            )
+            response.raise_for_status()
+            return response.json().get("vectors", [])
+
+    async def create(self, input_data) -> list[float]:
+        """Create embedding for a single text. Returns one vector."""
+        if isinstance(input_data, str):
+            texts = [input_data]
+        elif isinstance(input_data, list) and input_data and isinstance(input_data[0], str):
+            texts = [input_data[0]]
+        else:
+            texts = [str(input_data)]
+        vectors = await self._call_api(texts)
+        return vectors[0] if vectors else []
+
+    async def create_batch(self, input_data_list: list[str]) -> list[list[float]]:
+        """Create embeddings for multiple texts."""
+        return await self._call_api(input_data_list)
+
+
 # Global event loop for async bridge
 _loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -122,11 +167,23 @@ class GraphitiClient:
         )
         llm_client = OpenAIGenericClient(config=llm_config)
 
+        # Embedder: custom MiniMax embedder (their API uses 'texts' not 'input')
+        embedder = MiniMaxEmbedder(
+            api_key=Config.LLM_API_KEY,
+            base_url=Config.LLM_BASE_URL,
+        )
+
+        # Reranker: use the same LLM config (MiniMax-compatible)
+        from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+        reranker = OpenAIRerankerClient(config=llm_config)
+
         self._graphiti = Graphiti(
             self.neo4j_uri,
             self.neo4j_user,
             self.neo4j_password,
             llm_client=llm_client,
+            embedder=embedder,
+            cross_encoder=reranker,
         )
         # Build indices
         _run_async(self._graphiti.build_indices_and_constraints())
