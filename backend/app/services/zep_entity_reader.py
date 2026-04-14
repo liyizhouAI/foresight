@@ -243,21 +243,27 @@ class ZepEntityReader:
         for node in all_nodes:
             labels = node.get("labels", [])
             
-            # 筛选逻辑：Labels必须包含除"Entity"和"Node"之外的标签
-            custom_labels = [l for l in labels if l not in ["Entity", "Node"]]
-            
-            if not custom_labels:
-                # 只有默认标签，跳过
+            # 筛选逻辑：
+            # Graphiti 的节点可能只有 "Entity" 标签（不像 Zep 会自动分配自定义标签）
+            # 所以我们接受所有 Entity 节点，用名称匹配实体类型
+            custom_labels = [l for l in labels if l not in ["Entity", "Node", "__Entity__"]]
+
+            if custom_labels:
+                # 有自定义标签，直接用
+                entity_type = custom_labels[0]
+            elif node.get("name"):
+                # Graphiti 模式：所有节点都是 Entity，用 "Entity" 作为类型
+                entity_type = "Entity"
+            else:
+                # 无名称的节点，跳过
                 continue
-            
-            # 如果指定了预定义类型，检查是否匹配
-            if defined_entity_types:
+
+            # 如果指定了预定义类型且节点有自定义标签，检查匹配
+            if defined_entity_types and custom_labels:
                 matching_labels = [l for l in custom_labels if l in defined_entity_types]
                 if not matching_labels:
                     continue
                 entity_type = matching_labels[0]
-            else:
-                entity_type = custom_labels[0]
             
             entity_types_found.add(entity_type)
             
