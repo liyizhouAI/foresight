@@ -55,9 +55,9 @@ class Config:
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
     
-    # 文本处理配置
-    DEFAULT_CHUNK_SIZE = 500  # 默认切块大小
-    DEFAULT_CHUNK_OVERLAP = 50  # 默认重叠大小
+    # 文本处理配置（大 chunk 减少 LLM 调用次数，加速图谱构建）
+    DEFAULT_CHUNK_SIZE = 2000  # 默认切块大小
+    DEFAULT_CHUNK_OVERLAP = 200  # 默认重叠大小
     
     # OASIS模拟配置
     OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))

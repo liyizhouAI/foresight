@@ -274,37 +274,64 @@ class GraphitiClient:
         edge_types: Optional[Dict] = None,
         progress_callback=None,
     ):
-        """Add multiple text episodes sequentially with real-time progress."""
+        """Add multiple text episodes using bulk API for parallel processing."""
+        self._ensure_graphiti()
         total = len(texts)
         import time as _time
-        for i, text in enumerate(texts):
-            # Report progress BEFORE processing (so user sees "正在处理 2/5...")
+
+        # Use bulk API for parallel processing (much faster)
+        BULK_SIZE = 5  # Process 5 episodes in parallel per batch
+
+        for batch_start in range(0, total, BULK_SIZE):
+            batch_texts = texts[batch_start:batch_start + BULK_SIZE]
+            batch_end = min(batch_start + BULK_SIZE, total)
+
             if progress_callback:
                 progress_callback(
-                    f"正在处理第 {i + 1}/{total} 个文本块（Graphiti 实体提取中...）",
-                    i / total,
+                    f"正在并行处理第 {batch_start + 1}-{batch_end}/{total} 个文本块...",
+                    batch_start / total,
                 )
+
             start = _time.time()
             try:
-                self.add_episode(
-                    graph_id, text, source_description,
-                    entity_types, edge_types,
-                )
-            except Exception as e:
-                logger.error(f"Failed to add episode {i + 1}/{total}: {e}")
-                raise
-            elapsed = _time.time() - start
-            logger.info(f"Episode {i + 1}/{total} processed in {elapsed:.1f}s")
+                from graphiti_core.utils.bulk_utils import RawEpisode
+                from graphiti_core.nodes import EpisodeType
 
-            # Report completion of this episode
+                raw_episodes = [
+                    RawEpisode(
+                        name=f"episode_{batch_start + i}",
+                        content=text,
+                        source_description=source_description,
+                        source=EpisodeType.text,
+                        reference_time=datetime.now(timezone.utc),
+                    )
+                    for i, text in enumerate(batch_texts)
+                ]
+
+                _run_async(self._graphiti.add_episode_bulk(
+                    bulk_episodes=raw_episodes,
+                    group_id=graph_id,
+                    entity_types=entity_types,
+                    edge_types=edge_types,
+                ))
+            except Exception as e:
+                logger.warning(f"Bulk failed for batch {batch_start}-{batch_end}, falling back to sequential: {e}")
+                # Fallback: process one by one
+                for i, text in enumerate(batch_texts):
+                    try:
+                        self.add_episode(graph_id, text, source_description, entity_types, edge_types)
+                    except Exception as e2:
+                        logger.error(f"Episode {batch_start + i + 1}/{total} failed: {e2}")
+                        continue
+
+            elapsed = _time.time() - start
+            logger.info(f"Batch {batch_start + 1}-{batch_end}/{total} processed in {elapsed:.1f}s ({len(batch_texts)} episodes)")
+
             if progress_callback:
                 progress_callback(
-                    f"第 {i + 1}/{total} 个文本块处理完成（用时 {elapsed:.0f}s）",
-                    (i + 1) / total,
+                    f"第 {batch_start + 1}-{batch_end}/{total} 处理完成（{len(batch_texts)}块用时 {elapsed:.0f}s）",
+                    batch_end / total,
                 )
-            # Small delay to avoid rate limiting
-            if i < total - 1:
-                _time.sleep(0.3)
 
     # ========== Search ==========
 
