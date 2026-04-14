@@ -59,3 +59,6 @@ backend/uploads/
 # Docker 数据
 data/backend/.venv_direct/
 .playwright-mcp/
+.serena/
+.vercel/
+backend/.venv_direct/
