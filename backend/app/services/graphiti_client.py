@@ -19,6 +19,78 @@ from ..utils.logger import get_logger
 
 logger = get_logger('foresight.graphiti_client')
 
+# ============================================================
+# LOWEST-LEVEL PATCH: neo4j AsyncSession + AsyncTransaction
+# ============================================================
+_NEO4J_DRIVER_PATCHED = False
+
+
+def _sanitize_value(v):
+    """Recursively flatten a value to a Neo4j-safe primitive."""
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, dict):
+        # LLM JSON-schema pollution: {description, title, type, value} → extract value
+        if "value" in v:
+            return _sanitize_value(v["value"])
+        # Plain dict cannot be a Neo4j property → serialize as JSON string
+        import json as _json
+        return _json.dumps(v, ensure_ascii=False)
+    if isinstance(v, list):
+        return [_sanitize_value(x) for x in v]
+    return str(v)
+
+
+def _sanitize_params(params):
+    """Sanitize all values in a cypher parameters dict."""
+    if not isinstance(params, dict):
+        return params
+    return {k: _sanitize_value(v) for k, v in params.items()}
+
+
+def _patch_neo4j_driver():
+    """
+    Ultimate fallback: patch neo4j AsyncSession.run and AsyncTransaction.run
+    to sanitize all parameters before they reach the Neo4j wire protocol.
+
+    This catches every cypher call regardless of which graphiti path is taken.
+    """
+    global _NEO4J_DRIVER_PATCHED
+    if _NEO4J_DRIVER_PATCHED:
+        return
+
+    try:
+        from neo4j import AsyncSession, AsyncTransaction
+
+        _orig_session_run = AsyncSession.run
+
+        async def _patched_session_run(self, query, parameters=None, **kwargs):
+            sanitized = _sanitize_params(parameters) if parameters is not None else parameters
+            sanitized_kw = {k: _sanitize_value(v) for k, v in kwargs.items()} if kwargs else kwargs
+            return await _orig_session_run(self, query, sanitized, **sanitized_kw)
+
+        AsyncSession.run = _patched_session_run
+
+        _orig_tx_run = AsyncTransaction.run
+
+        async def _patched_tx_run(self, query, parameters=None, **kwargs):
+            sanitized = _sanitize_params(parameters) if parameters is not None else parameters
+            sanitized_kw = {k: _sanitize_value(v) for k, v in kwargs.items()} if kwargs else kwargs
+            return await _orig_tx_run(self, query, sanitized, **sanitized_kw)
+
+        AsyncTransaction.run = _patched_tx_run
+
+        _NEO4J_DRIVER_PATCHED = True
+        logger.info("[Foresight] Patched neo4j AsyncSession.run + AsyncTransaction.run for nested-dict sanitization")
+
+    except Exception as _e:
+        # Never let patch failure crash Flask startup
+        logger.warning(f"[Foresight] neo4j driver patch failed (non-fatal): {_e}")
+
+
+# Patch immediately at import time — before any graphiti code runs
+_patch_neo4j_driver()
+
 
 def _safe_str(val):
     """Convert any value to JSON-safe string, handling Neo4j DateTime etc."""
@@ -152,6 +224,111 @@ class GraphitiEdge:
         return self.uuid_
 
 
+def _patch_reranker_for_non_openai(reranker):
+    """
+    Patch OpenAIRerankerClient.rank() to be compatible with providers that don't support
+    logprobs / top_logprobs / logit_bias (e.g. GLM-4-Flash, MiniMax).
+
+    The original implementation uses logprobs to get True/False probabilities.
+    This patch replaces it with a simple text-based True/False prompt that works
+    with any OpenAI-compatible provider.
+
+    Root cause of GLM code 20015: Graphiti sends logprobs=True + top_logprobs=2
+    + logit_bias which GLM rejects with "The parameter is invalid."
+    """
+    try:
+        import numpy as np
+        from graphiti_core.helpers import semaphore_gather
+        from graphiti_core.llm_client import RateLimitError
+        import openai as _openai
+
+        client_obj = reranker.client
+        model_name = reranker.config.model or "glm-4-flash"
+
+        async def _compatible_rank(query: str, passages: list[str]) -> list[tuple[str, float]]:
+            if not passages:
+                return []
+
+            openai_messages_list = [
+                [
+                    {
+                        "role": "system",
+                        "content": "You are an expert tasked with determining whether the passage is relevant to the query",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            'Respond with only "True" if PASSAGE is relevant to QUERY and "False" otherwise.\n'
+                            f"<PASSAGE>\n{passage}\n</PASSAGE>\n"
+                            f"<QUERY>\n{query}\n</QUERY>"
+                        ),
+                    },
+                ]
+                for passage in passages
+            ]
+
+            try:
+                responses = await semaphore_gather(
+                    *[
+                        client_obj.chat.completions.create(
+                            model=model_name,
+                            messages=openai_messages,
+                            temperature=0,
+                            max_tokens=5,
+                        )
+                        for openai_messages in openai_messages_list
+                    ]
+                )
+
+                results = []
+                for passage, response in zip(passages, responses):
+                    text = response.choices[0].message.content or ""
+                    score = 1.0 if "true" in text.strip().lower() else 0.0
+                    results.append((passage, score))
+
+                results.sort(reverse=True, key=lambda x: x[1])
+                return results
+
+            except _openai.RateLimitError as e:
+                raise RateLimitError from e
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger(__name__).error(f"[Foresight] Reranker error: {e}")
+                # Fallback: return all passages with equal score (no reranking)
+                return [(p, 0.5) for p in passages]
+
+        reranker.rank = _compatible_rank
+        logger.info("[Foresight] Patched OpenAIRerankerClient.rank() for non-OpenAI provider compatibility (no logprobs)")
+
+    except Exception as e:
+        logger.warning(f"[Foresight] Failed to patch reranker (non-fatal): {e}")
+
+
+def _patch_embedder_empty_input(embedder):
+    """
+    Patch OpenAIEmbedder.create_batch to guard against empty input lists.
+
+    Root cause of code 20015 from SiliconFlow: Graphiti calls create_batch([]) when
+    there are no nodes to embed (e.g. create_entity_node_embeddings with empty list).
+    SiliconFlow (and GLM) return error 20015 for empty input arrays.
+
+    Fix: return [] immediately if input is empty, without calling the API.
+    """
+    try:
+        orig_create_batch = embedder.create_batch
+
+        async def guarded_create_batch(input_data_list):
+            if not input_data_list:
+                return []
+            return await orig_create_batch(input_data_list)
+
+        embedder.create_batch = guarded_create_batch
+        logger.info("[Foresight] Patched OpenAIEmbedder.create_batch to guard empty input (fixes code 20015)")
+
+    except Exception as e:
+        logger.warning(f"[Foresight] Failed to patch embedder (non-fatal): {e}")
+
+
 class GraphitiClient:
     """
     Graphiti + Neo4j 知识图谱客户端
@@ -190,6 +367,10 @@ class GraphitiClient:
         if self._graphiti is not None:
             return
 
+        # Re-apply driver patch (idempotent) in case import order caused it to run
+        # before neo4j was available, or the class got re-imported.
+        _patch_neo4j_driver()
+
         from graphiti_core import Graphiti
         from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
         from graphiti_core.llm_client.config import LLMConfig
@@ -217,9 +398,15 @@ class GraphitiClient:
         )
         embedder = OpenAIEmbedder(config=embedder_config)
 
-        # Reranker: use the LLM config (MiniMax)
+        # Reranker: use the LLM config
         from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
         reranker = OpenAIRerankerClient(config=llm_config)
+
+        # Patch reranker if the provider doesn't support logprobs (e.g. GLM, MiniMax)
+        _patch_reranker_for_non_openai(reranker)
+
+        # Patch embedder to guard against empty input (SiliconFlow/GLM return 20015 for [])
+        _patch_embedder_empty_input(embedder)
 
         self._graphiti = Graphiti(
             self.neo4j_uri,
@@ -241,66 +428,52 @@ class GraphitiClient:
 
     def _patch_entity_node_ops(self):
         """
-        Patch Neo4jEntityNodeOperations.save and save_bulk to sanitize entity_data
-        before writing to Neo4j. Handles the case where Qwen/other LLMs return
-        nested dicts (JSON-schema metadata) in fields like 'summary'.
+        Patch both EntityNode.save (single-episode path) and
+        bulk_utils.add_nodes_and_edges_bulk_tx (bulk/batch episode path) to sanitize
+        entity_data before writing to Neo4j.
+
+        Root cause: Qwen/other LLMs return JSON-schema metadata dicts in fields like
+        'summary' instead of plain strings. e.g.:
+            {"summary": {"description": "...", "title": "Summary", "type": "string", "value": "actual text"}}
+
+        The bulk path builds entity_data dicts and passes them directly via tx.run()
+        without calling EntityNode.save at all, so we must patch both paths.
         """
-        from graphiti_core.driver.neo4j.operations.entity_node_ops import Neo4jEntityNodeOperations
-        from graphiti_core.driver.driver import GraphProvider
-        from graphiti_core.driver.query_executor import QueryExecutor, Transaction
+        # --- Patch 1: EntityNode.save (single-episode path) ---
         from graphiti_core.nodes import EntityNode
-        from graphiti_core.models.nodes.node_db_queries import (
-            get_entity_node_save_query,
-            get_entity_node_save_bulk_query,
-        )
-        from typing import Any
 
-        _flatten = _sanitize_entity_data  # closure over module-level helper
+        original_save = EntityNode.save
 
-        original_save = Neo4jEntityNodeOperations.save
-        original_save_bulk = Neo4jEntityNodeOperations.save_bulk
+        async def patched_save(self_node, driver):
+            if isinstance(self_node.summary, (dict, list)):
+                self_node.summary = _flatten_entity_property(self_node.summary)
+            if self_node.attributes:
+                self_node.attributes = _sanitize_entity_data(self_node.attributes)
+            return await original_save(self_node, driver)
 
-        async def patched_save(self_ops, executor, node: EntityNode, tx=None):
-            entity_data: dict[str, Any] = {
-                'uuid': node.uuid,
-                'name': node.name,
-                'name_embedding': node.name_embedding,
-                'group_id': node.group_id,
-                'summary': node.summary,
-                'created_at': node.created_at,
-            }
-            entity_data.update(node.attributes or {})
-            entity_data = _flatten(entity_data)
-            labels = ':'.join(list(set(node.labels + ['Entity'])))
-            query = get_entity_node_save_query(GraphProvider.NEO4J, labels)
-            if tx is not None:
-                await tx.run(query, entity_data=entity_data)
-            else:
-                await executor.execute_query(query, entity_data=entity_data)
+        EntityNode.save = patched_save
+        logger.info("[Foresight] Patched EntityNode.save for single-episode sanitization")
 
-        async def patched_save_bulk(self_ops, executor, nodes: list, tx=None, batch_size: int = 100):
-            prepared: list[dict[str, Any]] = []
-            for node in nodes:
-                entity_data: dict[str, Any] = {
-                    'uuid': node.uuid,
-                    'name': node.name,
-                    'group_id': node.group_id,
-                    'summary': node.summary,
-                    'created_at': node.created_at,
-                    'name_embedding': node.name_embedding,
-                    'labels': list(set(node.labels + ['Entity'])),
-                }
-                entity_data.update(node.attributes or {})
-                prepared.append(_flatten(entity_data))
-            query = get_entity_node_save_bulk_query(GraphProvider.NEO4J, prepared)
-            if tx is not None:
-                await tx.run(query, nodes=prepared)
-            else:
-                await executor.execute_query(query, nodes=prepared)
+        # --- Patch 2: add_nodes_and_edges_bulk_tx (bulk episode path) ---
+        import graphiti_core.utils.bulk_utils as _bulk_utils
+        from typing import Any as _Any
 
-        Neo4jEntityNodeOperations.save = patched_save
-        Neo4jEntityNodeOperations.save_bulk = patched_save_bulk
-        logger.info("Patched Neo4jEntityNodeOperations to sanitize LLM-polluted entity fields")
+        original_bulk_tx = _bulk_utils.add_nodes_and_edges_bulk_tx
+
+        async def patched_bulk_tx(tx, episodic_nodes, episodic_edges, entity_nodes,
+                                  entity_edges, embedder):
+            # Sanitize each entity node's summary and attributes in-place before
+            # original function builds entity_data dicts from them
+            for node in entity_nodes:
+                if isinstance(node.summary, (dict, list)):
+                    node.summary = _flatten_entity_property(node.summary)
+                if node.attributes:
+                    node.attributes = _sanitize_entity_data(node.attributes)
+            return await original_bulk_tx(tx, episodic_nodes, episodic_edges,
+                                          entity_nodes, entity_edges, embedder)
+
+        _bulk_utils.add_nodes_and_edges_bulk_tx = patched_bulk_tx
+        logger.info("[Foresight] Patched add_nodes_and_edges_bulk_tx for bulk-episode sanitization")
 
     @classmethod
     def get_instance(cls) -> 'GraphitiClient':

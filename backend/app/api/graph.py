@@ -347,8 +347,9 @@ def build_graph():
         # 获取配置
         graph_name = data.get('graph_name', project.name or 'Foresight Graph')
         chunk_size = data.get('chunk_size', project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
+        chunk_size = min(chunk_size, 250)  # clamp: Qwen 32B max_seq_len=32768, keep prompt within window
         chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
-        
+
         # 更新项目配置
         project.chunk_size = chunk_size
         project.chunk_overlap = chunk_overlap
@@ -445,14 +446,37 @@ def build_graph():
                     progress=15
                 )
                 
-                episode_uuids = builder.add_text_batches(
-                    graph_id, 
-                    chunks,
-                    batch_size=3,
-                    progress_callback=add_progress_callback
-                )
-                
-                # Graphiti 同步处理，不需要轮询 episode 状态
+                # v0.3.2: 用 CustomGraphBuilder 替代 Graphiti add_episodes_batch
+                # 避免 Graphiti+GLM 兼容性问题（20015 parameter invalid / 上下文爆窗口 / 嵌套 dict 等）
+                from ..services.custom_graph_builder import CustomGraphBuilder
+
+                def custom_progress_cb(current, total, msg):
+                    prog = current / total if total else 0
+                    progress = 15 + int(prog * 75)  # 15% - 90%
+                    task_manager.update_task(
+                        task_id,
+                        message=msg,
+                        progress=progress
+                    )
+
+                cgb = CustomGraphBuilder(graph_id=graph_id, ontology=ontology)
+                try:
+                    build_stats = cgb.build(
+                        full_text=text,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        progress_callback=custom_progress_cb,
+                    )
+                    build_logger.info(
+                        f"[{task_id}] CustomGraphBuilder 完成: "
+                        f"entities={build_stats.get('entities_count')}, "
+                        f"edges={build_stats.get('edges_count')}, "
+                        f"chunks={build_stats.get('chunks_processed')}/{build_stats.get('total_chunks')}, "
+                        f"failed={build_stats.get('chunks_failed')}"
+                    )
+                finally:
+                    cgb.close()
+                episode_uuids = []  # 兼容后续变量引用
 
                 # 获取图谱数据
                 task_manager.update_task(

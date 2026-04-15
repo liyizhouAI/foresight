@@ -50,7 +50,7 @@ class GraphBuilderService:
         text: str,
         ontology: Dict[str, Any],
         graph_name: str = "Foresight Graph",
-        chunk_size: int = 500,
+        chunk_size: int = 250,
         chunk_overlap: int = 50,
         batch_size: int = 3
     ) -> str:
@@ -121,22 +121,27 @@ class GraphBuilderService:
                 message=t('progress.textSplit', count=total_chunks)
             )
 
-            # 4. 逐个添加 episode（Graphiti 同步处理，不需要轮询）
-            def progress_cb(msg, prog):
+            # 4. 用 CustomGraphBuilder 抽取实体 + 写入 Neo4j（替代 Graphiti）
+            from .custom_graph_builder import CustomGraphBuilder
+
+            def progress_cb(current, total, msg):
+                prog = current / total if total else 0
                 self.task_manager.update_task(
                     task_id,
                     progress=20 + int(prog * 0.65),  # 20-85%
                     message=msg
                 )
 
-            self.client.add_episodes_batch(
-                graph_id=graph_id,
-                texts=chunks,
-                source_description=graph_name,
-                entity_types=entity_types,
-                edge_types=edge_types,
-                progress_callback=progress_cb,
-            )
+            builder = CustomGraphBuilder(graph_id=graph_id, ontology=ontology)
+            try:
+                builder.build(
+                    full_text=text,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    progress_callback=progress_cb,
+                )
+            finally:
+                builder.close()
 
             # 5. 获取图谱信息
             self.task_manager.update_task(
