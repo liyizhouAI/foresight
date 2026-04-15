@@ -201,8 +201,13 @@ const initProject = async () => {
 const handleNewProject = async () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No pending files found.'
-    addLog('Error: No pending files found for new project.')
+    error.value = 'No pending files found. Redirecting to home to upload documents...'
+    addLog('No pending upload detected for /process/new. Redirecting to Home.')
+    // Direct-visit / refresh case: pending state is empty because it's in-memory only.
+    // Send user back to Home so they can upload files and start a real project.
+    setTimeout(() => {
+      router.replace({ name: 'Home' })
+    }, 800)
     return
   }
   

@@ -1,6 +1,6 @@
 # Foresight 先见之明 — 产品需求文档 (PRD)
 
-> **版本**：v0.3 — 2026-04-15 大版本前最后一次校准
+> **版本**：v0.3.1 — 2026-04-15 生产链路打通
 > **基线**：基于 [MiroFish](https://github.com/666ghj/MiroFish) v0.1.2 二次开发，已大量重构。
 
 ---
@@ -449,7 +449,35 @@ FLASK_DEBUG=False
 
 ## 8. v0.3 当前状态与已交付
 
-### v0.3 已完成（本次大版本前的全部更新）
+### v0.3.1 hotfix（2026-04-15 生产链路打通）
+
+经过一次完整的端到端测试，修复了 7 个阻塞生产跑通的 bug：
+
+- [x] **Manus 式沉浸视图重构** — 回放界面从三栏分析面板 → Manus 风格单栏 cinematic 视图
+  - 顶部 breadcrumb、浏览器外壳 + 平台原生帖子卡片、Jump to live 按钮、live 指示灯
+  - 右上角 ◫/▦ 可切回三栏分析视图
+  - 自动轮询：sim running 时每 10s 拉数据
+  - 文件：`frontend/src/views/SimulationReplayView.vue`
+
+- [x] **LLM 客户端指数退避重试** — 识别 `RateLimitError / 429 / 5xx / 1302 / 超时`，5 次重试 1→2→4→8→16s 带随机抖动
+  - 文件：`backend/app/utils/llm_client.py`
+
+- [x] **GLM → Qwen 32B 双 LLM 降级 fallback** — 主 LLM 重试耗尽后自动切 SiliconFlow Qwen 32B 单次兜底，解决 GLM 低 RPM 配额的间歇性限流
+  - 文件：`backend/app/services/ontology_generator.py`
+
+- [x] **Qwen 32B 上下文爆修复** — `MAX_TEXT_LENGTH_FOR_LLM` 50000 → 28000 chars，保证 prompt+response < 32768 tokens
+  - 文件：`backend/app/services/ontology_generator.py`
+
+- [x] **Neo4j entity summary flatten** — monkey-patch `Neo4jEntityNodeOperations.save/save_bulk`，LLM 返回嵌套 dict 时自动取 `.value` 扁平化，防 Neo4j TypeError
+  - 文件：`backend/app/services/graphiti_client.py`
+
+- [x] **Frontend 无 pending state 路由修复** — `/process/new` 访问时无上传状态，自动 `router.replace({name:'Home'})` 不再死循环
+  - 文件：`frontend/src/views/MainView.vue`
+
+- [x] **semaphore 100 → 30** — OASIS 模拟并发峰值降低，避免 GLM 限流雪崩
+  - 文件：`backend/scripts/run_parallel_simulation.py`
+
+### v0.3 完成（本次大版本前的全部更新）
 
 #### 基础设施迁移
 - [x] 从 Zep Cloud → 自托管 Graphiti + Neo4j（脱离外部 SaaS 依赖）
@@ -578,3 +606,7 @@ FLASK_DEBUG=False
 | 2026-04-15 | 200 agents 设为甜点 | 8G 容量 + 95% 置信度足够 |
 | 2026-04-15 | 上线 Manus 式 replay UI | 给客户演示 + 复盘工具 |
 | 2026-04-15 | v0.4 路线图：国内平台 + SaaS | 用户战略需求 |
+| 2026-04-15 | v0.3.1 hotfix：7 个 bug 修复 | 第一次完整 E2E 跑通压力测试 |
+| 2026-04-15 | LLM client 加指数退避重试 + 双 LLM fallback | GLM RPM 配额低，retry 不够兜底 |
+| 2026-04-15 | Replay UI 重构为 Manus cinematic 风格 | 三栏分析面板对客户演示不够"沉浸" |
+| 2026-04-15 | semaphore 100 → 30 | 高并发触发 GLM 限流雪崩 |

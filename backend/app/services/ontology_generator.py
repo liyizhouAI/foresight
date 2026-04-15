@@ -9,6 +9,7 @@ import re
 from typing import Dict, Any, List, Optional
 from ..utils.llm_client import LLMClient
 from ..utils.locale import get_language_instruction
+from ..config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,17 @@ class OntologyGenerator:
     
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient()
+        # Fallback LLM: SiliconFlow Qwen 32B（高 RPM，GLM 限流时兜底）
+        self._fallback_llm: Optional[LLMClient] = None
+        try:
+            if Config.GRAPHITI_LLM_API_KEY:
+                self._fallback_llm = LLMClient(
+                    api_key=Config.GRAPHITI_LLM_API_KEY,
+                    base_url=Config.GRAPHITI_LLM_BASE_URL,
+                    model=Config.GRAPHITI_LLM_MODEL,
+                )
+        except Exception as e:
+            logger.warning(f"Fallback LLM 初始化失败: {e}")
     
     def generate(
         self,
@@ -213,20 +225,35 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
         
-        # 调用LLM
-        result = self.llm_client.chat_json(
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096
-        )
+        # 调用 LLM（主 LLM 重试 5 次全失败后，自动降级到 fallback）
+        try:
+            result = self.llm_client.chat_json(
+                messages=messages,
+                temperature=0.3,
+                max_tokens=4096
+            )
+        except Exception as primary_err:
+            if not self._fallback_llm:
+                raise
+            logger.warning(
+                f"主 LLM (GLM) 生成本体失败，降级到 Qwen 32B fallback: "
+                f"{type(primary_err).__name__}: {str(primary_err)[:200]}"
+            )
+            result = self._fallback_llm.chat_json(
+                messages=messages,
+                temperature=0.3,
+                max_tokens=4096
+            )
         
         # 验证和后处理
         result = self._validate_and_process(result)
         
         return result
     
-    # 传给 LLM 的文本最大长度（5万字）
-    MAX_TEXT_LENGTH_FOR_LLM = 50000
+    # 传给 LLM 的文本最大长度（2.8万字）
+    # Qwen 32768 token 窗口：system prompt ~2K tokens + 响应 ~4K tokens
+    # 留给文档的安全预算 ≈ 26K tokens，保守按 1 char ≈ 1 token 估算取 28000 chars
+    MAX_TEXT_LENGTH_FOR_LLM = 28000
     
     def _build_user_message(
         self,
@@ -243,7 +270,7 @@ class OntologyGenerator:
         # 如果文本超过5万字，截断（仅影响传给LLM的内容，不影响图谱构建）
         if len(combined_text) > self.MAX_TEXT_LENGTH_FOR_LLM:
             combined_text = combined_text[:self.MAX_TEXT_LENGTH_FOR_LLM]
-            combined_text += f"\n\n...(原文共{original_length}字，已截取前{self.MAX_TEXT_LENGTH_FOR_LLM}字用于本体分析)..."
+            combined_text += f"\n\n[...文档已截断以适应 LLM 上下文窗口。原文共 {original_length} 字，已截取前 {self.MAX_TEXT_LENGTH_FOR_LLM} 字用于本体分析...]"
         
         message = f"""## 模拟需求
 

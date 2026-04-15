@@ -27,6 +27,34 @@ def _safe_str(val):
     return str(val)
 
 
+def _flatten_entity_property(value):
+    """
+    Flatten a potentially nested dict/list value into a Neo4j-safe primitive.
+
+    Priority:
+    1. Primitive (str/int/float/bool/None) → return as-is
+    2. dict with "value" key → recurse into value (handles LLM JSON-schema pollution)
+    3. dict → json.dumps
+    4. list → flatten each element recursively
+    5. Other → str()
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        if "value" in value:
+            return _flatten_entity_property(value["value"])
+        import json
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return [_flatten_entity_property(v) for v in value]
+    return str(value)
+
+
+def _sanitize_entity_data(entity_data: dict) -> dict:
+    """Sanitize all values in entity_data dict to Neo4j-safe primitives."""
+    return {k: _flatten_entity_property(v) for k, v in entity_data.items()}
+
+
 from graphiti_core.embedder.client import EmbedderClient
 
 
@@ -201,10 +229,78 @@ class GraphitiClient:
             embedder=embedder,
             cross_encoder=reranker,
         )
+
+        # Monkey-patch Neo4j entity node ops to sanitize LLM-polluted summary fields
+        # before they reach Neo4j (which rejects non-primitive property values).
+        self._patch_entity_node_ops()
+
         # Build indices
         _run_async(self._graphiti.build_indices_and_constraints())
         self._initialized = True
         logger.info("Graphiti core initialized with indices")
+
+    def _patch_entity_node_ops(self):
+        """
+        Patch Neo4jEntityNodeOperations.save and save_bulk to sanitize entity_data
+        before writing to Neo4j. Handles the case where Qwen/other LLMs return
+        nested dicts (JSON-schema metadata) in fields like 'summary'.
+        """
+        from graphiti_core.driver.neo4j.operations.entity_node_ops import Neo4jEntityNodeOperations
+        from graphiti_core.driver.driver import GraphProvider
+        from graphiti_core.driver.query_executor import QueryExecutor, Transaction
+        from graphiti_core.nodes import EntityNode
+        from graphiti_core.models.nodes.node_db_queries import (
+            get_entity_node_save_query,
+            get_entity_node_save_bulk_query,
+        )
+        from typing import Any
+
+        _flatten = _sanitize_entity_data  # closure over module-level helper
+
+        original_save = Neo4jEntityNodeOperations.save
+        original_save_bulk = Neo4jEntityNodeOperations.save_bulk
+
+        async def patched_save(self_ops, executor, node: EntityNode, tx=None):
+            entity_data: dict[str, Any] = {
+                'uuid': node.uuid,
+                'name': node.name,
+                'name_embedding': node.name_embedding,
+                'group_id': node.group_id,
+                'summary': node.summary,
+                'created_at': node.created_at,
+            }
+            entity_data.update(node.attributes or {})
+            entity_data = _flatten(entity_data)
+            labels = ':'.join(list(set(node.labels + ['Entity'])))
+            query = get_entity_node_save_query(GraphProvider.NEO4J, labels)
+            if tx is not None:
+                await tx.run(query, entity_data=entity_data)
+            else:
+                await executor.execute_query(query, entity_data=entity_data)
+
+        async def patched_save_bulk(self_ops, executor, nodes: list, tx=None, batch_size: int = 100):
+            prepared: list[dict[str, Any]] = []
+            for node in nodes:
+                entity_data: dict[str, Any] = {
+                    'uuid': node.uuid,
+                    'name': node.name,
+                    'group_id': node.group_id,
+                    'summary': node.summary,
+                    'created_at': node.created_at,
+                    'name_embedding': node.name_embedding,
+                    'labels': list(set(node.labels + ['Entity'])),
+                }
+                entity_data.update(node.attributes or {})
+                prepared.append(_flatten(entity_data))
+            query = get_entity_node_save_bulk_query(GraphProvider.NEO4J, prepared)
+            if tx is not None:
+                await tx.run(query, nodes=prepared)
+            else:
+                await executor.execute_query(query, nodes=prepared)
+
+        Neo4jEntityNodeOperations.save = patched_save
+        Neo4jEntityNodeOperations.save_bulk = patched_save_bulk
+        logger.info("Patched Neo4jEntityNodeOperations to sanitize LLM-polluted entity fields")
 
     @classmethod
     def get_instance(cls) -> 'GraphitiClient':

@@ -5,10 +5,40 @@ LLM客户端封装
 
 import json
 import re
+import time
+import random
+import logging
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from openai import OpenAI, RateLimitError, APIError, APIConnectionError, APITimeoutError
 
 from ..config import Config
+
+logger = logging.getLogger('foresight.llm_client')
+
+# 重试配置（针对 429 / 5xx / 超时 / 连接错误）
+_MAX_RETRIES = 5
+_BASE_BACKOFF = 1.0  # 首次重试等 1s
+_MAX_BACKOFF = 30.0  # 单次最多等 30s
+
+
+def _is_rate_limit_error(err: Exception) -> bool:
+    """判断是否是速率限制/可重试错误"""
+    if isinstance(err, (RateLimitError, APIConnectionError, APITimeoutError)):
+        return True
+    if isinstance(err, APIError):
+        # 429 / 500 / 502 / 503 / 504 都可重试
+        status = getattr(err, "status_code", None) or getattr(err, "code", None)
+        try:
+            status = int(status) if status else None
+        except (ValueError, TypeError):
+            status = None
+        if status in (429, 500, 502, 503, 504):
+            return True
+        # 智谱 1302 = 速率限制
+        msg = str(err)
+        if "1302" in msg or "rate limit" in msg.lower() or "速率限制" in msg or "too many request" in msg.lower():
+            return True
+    return False
 
 
 class LLMClient:
@@ -61,7 +91,28 @@ class LLMClient:
         if response_format:
             kwargs["response_format"] = response_format
 
-        response = self.client.chat.completions.create(**kwargs)
+        # 带指数退避的重试：处理 429/5xx/超时等可恢复错误
+        response = None
+        last_err = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+                break
+            except Exception as err:
+                last_err = err
+                if attempt >= _MAX_RETRIES or not _is_rate_limit_error(err):
+                    raise
+                # 指数退避 + 随机抖动
+                backoff = min(_MAX_BACKOFF, _BASE_BACKOFF * (2 ** attempt))
+                backoff += random.uniform(0, backoff * 0.3)
+                logger.warning(
+                    f"LLM 调用遇到可重试错误 (attempt {attempt + 1}/{_MAX_RETRIES}): "
+                    f"{type(err).__name__}: {str(err)[:200]}. 退避 {backoff:.1f}s 后重试..."
+                )
+                time.sleep(backoff)
+        if response is None:
+            raise last_err or RuntimeError("LLM 调用失败（未知原因）")
+
         # Token 追踪（v0.3 新增）：记录每次调用的 token 消耗，按当前 stage 归类
         try:
             from . import token_tracker
