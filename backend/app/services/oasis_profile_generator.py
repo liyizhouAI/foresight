@@ -819,7 +819,8 @@ class OasisProfileGenerator:
         graph_id: Optional[str] = None,
         parallel_count: int = 5,
         realtime_output_path: Optional[str] = None,
-        output_platform: str = "reddit"
+        output_platform: str = "reddit",
+        cancel_check: Optional[callable] = None
     ) -> List[OasisAgentProfile]:
         """
         批量从实体生成Agent Profile（支持并行生成）
@@ -918,6 +919,8 @@ class OasisProfileGenerator:
         print(f"开始生成Agent人设 - 共 {total} 个实体，并行数: {parallel_count}")
         print(f"{'='*60}\n")
         
+        cancelled = False
+
         # 使用线程池并行执行
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
             # 提交所有任务
@@ -925,12 +928,22 @@ class OasisProfileGenerator:
                 executor.submit(generate_single_profile, idx, entity): (idx, entity)
                 for idx, entity in enumerate(entities)
             }
-            
+
             # 收集结果
             for future in concurrent.futures.as_completed(future_to_entity):
+                # 检测到加速信号：取消未开始的任务并结束收集
+                if cancel_check and cancel_check():
+                    cancelled = True
+                    logger.info("检测到加速完成信号，取消剩余未完成的人设生成任务")
+                    print("\n[加速完成] 用户请求立即结束人设生成，取消剩余任务...")
+                    for f in future_to_entity:
+                        if not f.done():
+                            f.cancel()
+                    break
+
                 idx, entity = future_to_entity[future]
                 entity_type = entity.get_entity_type() or "Entity"
-                
+
                 try:
                     result_idx, profile, error = future.result()
                     profiles[result_idx] = profile
@@ -970,11 +983,21 @@ class OasisProfileGenerator:
                     # 实时写入文件（即使是备用人设）
                     save_profiles_realtime()
         
+        # 过滤掉未完成的 None 占位符（加速完成或任务取消时可能存在）
+        final_profiles = [p for p in profiles if p is not None]
+
+        # 加速完成后再写一次实时文件，确保文件内容与返回值一致
+        if cancelled and realtime_output_path:
+            save_profiles_realtime()
+
         print(f"\n{'='*60}")
-        print(f"人设生成完成！共生成 {len([p for p in profiles if p])} 个Agent")
+        if cancelled:
+            print(f"人设生成已加速完成！共生成 {len(final_profiles)} 个Agent（原计划 {total} 个）")
+        else:
+            print(f"人设生成完成！共生成 {len(final_profiles)} 个Agent")
         print(f"{'='*60}\n")
-        
-        return profiles
+
+        return final_profiles
     
     def _print_generated_profile(self, entity_name: str, entity_type: str, profile: OasisAgentProfile):
         """实时输出生成的人设到控制台（完整内容，不截断）"""

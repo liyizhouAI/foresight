@@ -125,10 +125,25 @@ class SimulationManager:
     
     # 模拟数据存储目录
     SIMULATION_DATA_DIR = os.path.join(
-        os.path.dirname(__file__), 
+        os.path.dirname(__file__),
         '../../uploads/simulations'
     )
-    
+
+    # 加速完成标志：simulation_id -> True 表示用户请求立即结束 profile 生成
+    _accelerate_flags: Dict[str, bool] = {}
+
+    @classmethod
+    def request_accelerate(cls, simulation_id: str) -> None:
+        cls._accelerate_flags[simulation_id] = True
+
+    @classmethod
+    def is_accelerate_requested(cls, simulation_id: str) -> bool:
+        return cls._accelerate_flags.get(simulation_id, False)
+
+    @classmethod
+    def clear_accelerate(cls, simulation_id: str) -> None:
+        cls._accelerate_flags.pop(simulation_id, None)
+
     def __init__(self):
         # 确保目录存在
         os.makedirs(self.SIMULATION_DATA_DIR, exist_ok=True)
@@ -262,7 +277,10 @@ class SimulationManager:
         state = self._load_simulation_state(simulation_id)
         if not state:
             raise ValueError(f"模拟不存在: {simulation_id}")
-        
+
+        # 重置加速标志，防止上一轮残留
+        self.clear_accelerate(simulation_id)
+
         try:
             state.status = SimulationStatus.PREPARING
             self._save_simulation_state(state)
@@ -343,9 +361,19 @@ class SimulationManager:
                 graph_id=state.graph_id,  # 传入graph_id用于Zep检索
                 parallel_count=parallel_profile_count,  # 并行生成数量
                 realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                output_platform=realtime_platform,  # 输出格式
+                cancel_check=lambda sid=simulation_id: self.is_accelerate_requested(sid)
             )
-            
+
+            # 若触发了加速完成，后续 config 生成需要只使用实际生成了 profile 的实体，
+            # 避免实体数（filtered.entities）与 profile 数不一致导致 config 与 profile 对不上
+            if len(profiles) < len(filtered.entities):
+                generated_uuids = {p.source_entity_uuid for p in profiles if p.source_entity_uuid}
+                filtered.entities = [e for e in filtered.entities if e.uuid in generated_uuids]
+                filtered.filtered_count = len(filtered.entities)
+                state.entities_count = filtered.filtered_count
+                logger.info(f"加速完成：实际使用 {len(filtered.entities)} 个实体继续后续流程")
+
             state.profiles_count = len(profiles)
             
             # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
@@ -444,9 +472,10 @@ class SimulationManager:
             
             logger.info(f"模拟准备完成: {simulation_id}, "
                        f"entities={state.entities_count}, profiles={state.profiles_count}")
-            
+
+            self.clear_accelerate(simulation_id)
             return state
-            
+
         except Exception as e:
             logger.error(f"模拟准备失败: {simulation_id}, error={str(e)}")
             import traceback
@@ -454,6 +483,7 @@ class SimulationManager:
             state.status = SimulationStatus.FAILED
             state.error = str(e)
             self._save_simulation_state(state)
+            self.clear_accelerate(simulation_id)
             raise
     
     def get_simulation(self, simulation_id: str) -> Optional[SimulationState]:

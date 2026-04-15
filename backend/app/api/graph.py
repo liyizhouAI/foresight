@@ -154,7 +154,11 @@ def generate_ontology():
         simulation_requirement = request.form.get('simulation_requirement', '')
         project_name = request.form.get('project_name', 'Unnamed Project')
         additional_context = request.form.get('additional_context', '')
-        
+
+        # token 追踪：标记当前 stage
+        from ..utils import token_tracker
+        token_tracker.set_stage("step1_ontology")
+
         logger.debug(f"项目名称: {project_name}")
         logger.debug(f"模拟需求: {simulation_requirement[:100]}...")
         
@@ -282,7 +286,11 @@ def build_graph():
     """
     try:
         logger.info("=== 开始构建图谱 ===")
-        
+
+        # token 追踪：标记当前 stage
+        from ..utils import token_tracker
+        token_tracker.set_stage("step2_graph_build")
+
         # 检查配置
         errors = []
         if not Config.ZEP_API_KEY:

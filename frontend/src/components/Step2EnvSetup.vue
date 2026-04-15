@@ -49,6 +49,16 @@
             <span class="step-title">{{ $t('step2.generateAgentPersona') }}</span>
           </div>
           <div class="step-status">
+            <button
+              v-if="phase === 1 && profiles.length > 0"
+              class="accelerate-btn"
+              :class="{ 'is-requested': accelerateRequested }"
+              :disabled="accelerateRequested"
+              @click="handleAccelerate"
+              :title="$t('step2.accelerateHint')"
+            >
+              {{ accelerateRequested ? $t('step2.acceleratePending') : $t('step2.accelerateComplete') }}
+            </button>
             <span v-if="phase > 1" class="badge success">{{ $t('common.completed') }}</span>
             <span v-else-if="phase === 1" class="badge processing">{{ prepareProgress }}%</span>
             <span v-else class="badge pending">{{ $t('common.pending') }}</span>
@@ -639,7 +649,8 @@ import {
   getPrepareStatus,
   getSimulationProfilesRealtime,
   getSimulationConfig,
-  getSimulationConfigRealtime
+  getSimulationConfigRealtime,
+  accelerateSimulationPrepare
 } from '../api/simulation'
 
 const { t } = useI18n()
@@ -665,6 +676,7 @@ const expectedTotal = ref(null)
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
+const accelerateRequested = ref(false)
 
 // 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
@@ -821,6 +833,26 @@ const startPrepareSimulation = async () => {
   } catch (err) {
     addLog(t('log.prepareException', { error: err.message }))
     emit('update-status', 'error')
+  }
+}
+
+const handleAccelerate = async () => {
+  if (accelerateRequested.value || !props.simulationId) return
+  if (profiles.value.length === 0) {
+    addLog(t('log.accelerateNoProfiles'))
+    return
+  }
+  accelerateRequested.value = true
+  addLog(t('log.accelerateRequested', { count: profiles.value.length }))
+  try {
+    const res = await accelerateSimulationPrepare({ simulation_id: props.simulationId })
+    if (!res.success) {
+      accelerateRequested.value = false
+      addLog(t('log.accelerateFailed', { error: res.error || t('common.unknownError') }))
+    }
+  } catch (err) {
+    accelerateRequested.value = false
+    addLog(t('log.accelerateFailed', { error: err.message }))
   }
 }
 
@@ -1160,6 +1192,38 @@ onUnmounted(() => {
 .badge.processing { background: #FF5722; color: #FFF; }
 .badge.pending { background: #F5F5F5; color: #999; }
 .badge.accent { background: #E3F2FD; color: #1565C0; }
+
+.step-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accelerate-btn {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid #FF5722;
+  background: #FFF;
+  color: #FF5722;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+.accelerate-btn:hover:not(:disabled) {
+  background: #FF5722;
+  color: #FFF;
+}
+.accelerate-btn:disabled,
+.accelerate-btn.is-requested {
+  cursor: not-allowed;
+  border-color: #BDBDBD;
+  color: #9E9E9E;
+  background: #F5F5F5;
+}
 
 .card-content {
   /* No extra padding - uses step-card's padding */

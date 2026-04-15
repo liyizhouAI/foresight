@@ -25,6 +25,14 @@ export const getPrepareStatus = (data) => {
 }
 
 /**
+ * 加速完成 Agent 人设生成：停止生成剩余 profile，用已生成的继续后续流程
+ * @param {Object} data - { simulation_id }
+ */
+export const accelerateSimulationPrepare = (data) => {
+  return service.post('/api/simulation/prepare/accelerate', data)
+}
+
+/**
  * 获取模拟状态
  * @param {string} simulationId
  */
@@ -141,6 +149,15 @@ export const getSimulationTimeline = (simulationId, startRound = 0, endRound = n
  */
 export const getAgentStats = (simulationId) => {
   return service.get(`/api/simulation/${simulationId}/agent-stats`)
+}
+
+/**
+ * 获取模拟完整回放数据（Manus 式过程回放）
+ * 一次性返回 simulation/project/workflow/config/agents/rounds/aggregate
+ * @param {string} simulationId
+ */
+export const getSimulationReplay = (simulationId) => {
+  return service.get(`/api/simulation/${simulationId}/replay`)
 }
 
 /**

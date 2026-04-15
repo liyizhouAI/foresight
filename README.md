@@ -85,11 +85,12 @@ Click the image to watch Foresight's deep prediction of the lost ending based on
 
 ## 🔄 Workflow
 
-1. **Graph Building**: Seed extraction & Individual/collective memory injection & GraphRAG construction
-2. **Environment Setup**: Entity relationship extraction & Persona generation & Agent configuration injection
-3. **Simulation**: Dual-platform parallel simulation & Auto-parse prediction requirements & Dynamic temporal memory updates
+1. **Graph Building**: Seed extraction & Individual/collective memory injection & GraphRAG construction (Graphiti + Neo4j)
+2. **Environment Setup**: Entity relationship extraction & Persona generation & Agent configuration injection (with "Skip & Continue" button)
+3. **Simulation**: Dual-platform parallel simulation (Twitter + Reddit) & Auto-parse prediction requirements & Dynamic temporal memory updates
 4. **Report Generation**: ReportAgent with rich toolset for deep interaction with post-simulation environment
 5. **Deep Interaction**: Chat with any agent in the simulated world & Interact with ReportAgent
+6. **Process Replay (v0.3 New)**: Manus-style draggable timeline to replay the entire workflow and every round of agent actions — perfect for retros and demos
 
 ## 🚀 Quick Start
 

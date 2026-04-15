@@ -103,6 +103,9 @@
     "asyncTaskDone": "异步任务已完成",
     "generateAgentPersona": "生成 Agent 人设",
     "generateAgentPersonaDesc": "结合上下文，自动调用工具从知识图谱梳理实体与关系，初始化模拟个体，并基于现实种子赋予他们独特的行为与记忆",
+    "accelerateComplete": "加速完成",
+    "acceleratePending": "正在加速…",
+    "accelerateHint": "停止继续生成剩余人设，使用已生成的人设直接进入下一步",
     "currentAgentCount": "当前Agent数",
     "expectedAgentTotal": "预期Agent总数",
     "relatedTopicsCount": "现实种子当前关联话题数",
@@ -453,6 +456,9 @@
     "preparingScripts": "准备模拟脚本"
   },
   "log": {
+    "accelerateRequested": "⚡ 已请求加速完成：将使用已生成的 {count} 个 Agent 人设进入下一步",
+    "accelerateNoProfiles": "⚠ 暂无已生成的人设，无法加速完成",
+    "accelerateFailed": "加速完成请求失败: {error}",
     "preparingGoBack": "准备返回 Step 2，正在关闭模拟...",
     "closingSimEnv": "正在关闭模拟环境...",
     "simEnvClosed": "✓ 模拟环境已关闭",

@@ -4,6 +4,8 @@ Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化�
 """
 
 import os
+import json
+import csv
 import traceback
 from flask import request, jsonify, send_file
 
@@ -401,8 +403,12 @@ def prepare_simulation():
     import os
     from ..models.task import TaskManager, TaskStatus
     from ..config import Config
-    
+    from ..utils import token_tracker
+
     try:
+        # token 追踪：profile + config 生成阶段统一归到 step3_prepare
+        token_tracker.set_stage("step3_prepare")
+
         data = request.get_json() or {}
         
         simulation_id = data.get('simulation_id')
@@ -636,6 +642,53 @@ def prepare_simulation():
             "success": False,
             "error": str(e),
             "traceback": traceback.format_exc()
+        }), 500
+
+
+@simulation_bp.route('/prepare/accelerate', methods=['POST'])
+def accelerate_prepare():
+    """
+    加速完成 Agent 人设生成
+
+    向正在运行的 prepare 任务发送"加速完成"信号：
+    - 停止继续生成未开始的 profile
+    - 用已生成的 profile 继续后续流程（config 生成等）
+
+    请求（JSON）：
+        { "simulation_id": "sim_xxxx" }
+    """
+    try:
+        data = request.get_json() or {}
+        simulation_id = data.get('simulation_id')
+        if not simulation_id:
+            return jsonify({
+                "success": False,
+                "error": t('api.requireSimulationId')
+            }), 400
+
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": t('api.simulationNotFound', id=simulation_id)
+            }), 404
+
+        manager.request_accelerate(simulation_id)
+        logger.info(f"已收到加速完成请求: simulation_id={simulation_id}")
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "simulation_id": simulation_id,
+                "message": "加速完成信号已发送，后台将在下一个检查点停止生成剩余人设"
+            }
+        })
+    except Exception as e:
+        logger.error(f"加速完成请求失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
         }), 500
 
 
@@ -1948,6 +2001,337 @@ def get_simulation_timeline(simulation_id: str):
         
     except Exception as e:
         logger.error(f"获取时间线失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+def _find_latest_simulation_start(sim_dir: str) -> str:
+    """
+    扫描 twitter/actions.jsonl 和 reddit/actions.jsonl，找出最近一次 simulation_start 事件的时间戳。
+    用于过滤掉历史 run 残留的 actions（jsonl 是 append-only，多次 run 会累积）。
+    返回 ISO 格式时间戳字符串，找不到则返回空串。
+    """
+    latest = ""
+    for sub in ("twitter", "reddit"):
+        path = os.path.join(sim_dir, sub, "actions.jsonl")
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or '"simulation_start"' not in line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except Exception:
+                        continue
+                    if evt.get("event_type") != "simulation_start":
+                        continue
+                    ts = evt.get("timestamp", "")
+                    if ts and ts > latest:
+                        latest = ts
+        except Exception:
+            continue
+    return latest
+
+
+def _extract_entity_type_names(ontology):
+    """从 ontology 字段中提取实体类型名称列表，兼容 dict / list / dict-of-list 多种格式"""
+    if not ontology:
+        return []
+    if isinstance(ontology, list):
+        return [str(x) for x in ontology[:50]]
+    if isinstance(ontology, dict):
+        et = ontology.get("entity_types")
+        if isinstance(et, dict):
+            return list(et.keys())[:50]
+        if isinstance(et, list):
+            return [item.get("name", str(item)) if isinstance(item, dict) else str(item) for item in et[:50]]
+    return []
+
+
+@simulation_bp.route('/<simulation_id>/replay', methods=['GET'])
+def get_simulation_replay(simulation_id: str):
+    """
+    获取模拟完整回放数据（Manus 式过程回放）
+
+    一次性返回展示整个 Foresight 工作流所需的全部数据，前端无需多次请求：
+    - simulation: 基本状态
+    - project: 文档/需求/图谱信息
+    - workflow: 5 步工作流时间线（每步 status + metadata）
+    - config: 模拟配置摘要（时间配置 + 事件配置）
+    - agents: agent 精简列表（id/name/username/profession/bio）
+    - rounds: 每轮动作列表 + 每轮统计（action_types, by_platform, active_agents_count）
+    - aggregate: 全局聚合（总动作数、类型分布、top agents）
+
+    用途：前端 /simulation/:id/replay 路由，播放整个模拟过程
+    """
+    try:
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": f"simulation not found: {simulation_id}"
+            }), 404
+
+        sim_dir = manager._get_simulation_dir(simulation_id)
+
+        # ---------- 1. 项目信息 ----------
+        project_info = None
+        try:
+            project = ProjectManager.get_project(state.project_id)
+            if project:
+                project_info = {
+                    "project_id": project.project_id,
+                    "name": project.name,
+                    "status": project.status.value if hasattr(project.status, 'value') else str(project.status),
+                    "graph_id": project.graph_id,
+                    "simulation_requirement": project.simulation_requirement,
+                    "files": [
+                        {
+                            "filename": f.get("original_filename") or f.get("filename"),
+                            "size": f.get("size"),
+                        }
+                        for f in (project.files or [])
+                    ],
+                    "total_text_length": project.total_text_length,
+                    "analysis_summary": (project.analysis_summary or "")[:500] if project.analysis_summary else None,
+                    "ontology_entity_types": _extract_entity_type_names(project.ontology),
+                }
+        except Exception as e:
+            logger.warning(f"replay: 读取项目信息失败 {state.project_id}: {e}")
+
+        # ---------- 2. 模拟配置 ----------
+        sim_config = {}
+        config_path = os.path.join(sim_dir, "simulation_config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    sim_config = json.load(f)
+            except Exception as e:
+                logger.warning(f"replay: 读取 simulation_config.json 失败: {e}")
+
+        time_config = sim_config.get("time_config", {}) or {}
+        event_config = sim_config.get("event_config", {}) or {}
+        agent_configs = sim_config.get("agent_configs", []) or []
+        minutes_per_round = time_config.get("minutes_per_round", 60)
+
+        # ---------- 3. Agents (精简版，用于回放显示) ----------
+        agents = []
+        reddit_path = os.path.join(sim_dir, "reddit_profiles.json")
+        twitter_path = os.path.join(sim_dir, "twitter_profiles.csv")
+
+        if os.path.exists(reddit_path):
+            try:
+                with open(reddit_path, 'r', encoding='utf-8') as f:
+                    reddit_profiles = json.load(f)
+                for idx, p in enumerate(reddit_profiles):
+                    agents.append({
+                        "id": p.get("user_id", idx),
+                        "name": p.get("name") or p.get("username") or f"agent_{idx}",
+                        "username": p.get("username") or p.get("user_name") or f"agent_{idx}",
+                        "profession": p.get("profession"),
+                        "bio": (p.get("bio") or "")[:200],
+                        "interested_topics": p.get("interested_topics") or [],
+                    })
+            except Exception as e:
+                logger.warning(f"replay: 读取 reddit_profiles.json 失败: {e}")
+        elif os.path.exists(twitter_path):
+            try:
+                with open(twitter_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for idx, row in enumerate(reader):
+                        agents.append({
+                            "id": int(row.get("user_id", idx) or idx),
+                            "name": row.get("name") or row.get("username") or f"agent_{idx}",
+                            "username": row.get("username") or row.get("user_name") or f"agent_{idx}",
+                            "profession": row.get("profession"),
+                            "bio": (row.get("bio") or "")[:200],
+                            "interested_topics": [],
+                        })
+            except Exception as e:
+                logger.warning(f"replay: 读取 twitter_profiles.csv 失败: {e}")
+
+        # ---------- 4. Actions + rounds ----------
+        # 找出最近一次 simulation_start 的时间戳，过滤掉之前 run 残留的 actions
+        # （actions.jsonl 是 append-only，多次 run 会累积；只显示最新这次）
+        latest_start_ts = _find_latest_simulation_start(sim_dir)
+
+        all_actions = SimulationRunner.get_all_actions(simulation_id)
+        if latest_start_ts:
+            all_actions = [a for a in all_actions if a.timestamp >= latest_start_ts]
+        # 按时间戳升序（回放需要从 round 0 到最后）
+        all_actions.sort(key=lambda a: (a.round_num, a.timestamp))
+
+        rounds_map = {}
+        for action in all_actions:
+            r = action.round_num
+            if r not in rounds_map:
+                simulated_minutes = r * minutes_per_round
+                rounds_map[r] = {
+                    "round_num": r,
+                    "simulated_hour": (simulated_minutes // 60) % 24,
+                    "simulated_day": simulated_minutes // (60 * 24) + 1,
+                    "first_timestamp": action.timestamp,
+                    "last_timestamp": action.timestamp,
+                    "actions": [],
+                    "_active_agents": set(),
+                    "_by_type": {},
+                    "_by_platform": {"twitter": 0, "reddit": 0},
+                }
+            rd = rounds_map[r]
+            rd["actions"].append(action.to_dict())
+            rd["last_timestamp"] = action.timestamp
+            rd["_active_agents"].add(action.agent_id)
+            rd["_by_type"][action.action_type] = rd["_by_type"].get(action.action_type, 0) + 1
+            if action.platform in rd["_by_platform"]:
+                rd["_by_platform"][action.platform] += 1
+
+        rounds_list = []
+        for r in sorted(rounds_map.keys()):
+            rd = rounds_map[r]
+            rounds_list.append({
+                "round_num": rd["round_num"],
+                "simulated_hour": rd["simulated_hour"],
+                "simulated_day": rd["simulated_day"],
+                "first_timestamp": rd["first_timestamp"],
+                "last_timestamp": rd["last_timestamp"],
+                "actions": rd["actions"],
+                "stats": {
+                    "total_actions": len(rd["actions"]),
+                    "active_agents_count": len(rd["_active_agents"]),
+                    "by_type": rd["_by_type"],
+                    "by_platform": rd["_by_platform"],
+                },
+            })
+
+        # ---------- 5. Aggregate ----------
+        total_actions = len(all_actions)
+        action_type_dist = {}
+        agent_action_count = {}
+        platform_totals = {"twitter": 0, "reddit": 0}
+        for a in all_actions:
+            action_type_dist[a.action_type] = action_type_dist.get(a.action_type, 0) + 1
+            key = (a.agent_id, a.agent_name)
+            agent_action_count[key] = agent_action_count.get(key, 0) + 1
+            if a.platform in platform_totals:
+                platform_totals[a.platform] += 1
+
+        top_agents = sorted(
+            [{"agent_id": k[0], "agent_name": k[1], "count": v} for k, v in agent_action_count.items()],
+            key=lambda x: x["count"],
+            reverse=True,
+        )[:10]
+
+        # ---------- 6. Workflow 时间线 ----------
+        status_str = state.status.value if hasattr(state.status, 'value') else str(state.status)
+        workflow = [
+            {
+                "step": 1,
+                "name": "文档录入与需求确认",
+                "status": "completed" if project_info else "pending",
+                "metadata": {
+                    "files": project_info["files"] if project_info else [],
+                    "requirement": project_info["simulation_requirement"] if project_info else None,
+                    "text_length": project_info["total_text_length"] if project_info else 0,
+                    "analysis_summary": project_info["analysis_summary"] if project_info else None,
+                },
+            },
+            {
+                "step": 2,
+                "name": "知识图谱构建",
+                "status": "completed" if state.entities_count > 0 else "pending",
+                "metadata": {
+                    "graph_id": state.graph_id,
+                    "entity_types": state.entity_types,
+                    "entities_count": state.entities_count,
+                    "ontology_entity_types": project_info["ontology_entity_types"] if project_info else [],
+                },
+            },
+            {
+                "step": 3,
+                "name": "Agent 人设生成",
+                "status": "completed" if state.profiles_count > 0 else "pending",
+                "metadata": {
+                    "profiles_count": state.profiles_count,
+                    "agents_loaded": len(agents),
+                },
+            },
+            {
+                "step": 4,
+                "name": "模拟配置生成",
+                "status": "completed" if state.config_generated else "pending",
+                "metadata": {
+                    "config_reasoning": (state.config_reasoning or "")[:500] if state.config_reasoning else None,
+                    "total_simulation_hours": time_config.get("total_simulation_hours"),
+                    "minutes_per_round": minutes_per_round,
+                    "peak_hours": time_config.get("peak_hours"),
+                    "agents_per_hour_min": time_config.get("agents_per_hour_min"),
+                    "agents_per_hour_max": time_config.get("agents_per_hour_max"),
+                    "initial_posts_count": len(event_config.get("initial_posts", [])),
+                },
+            },
+            {
+                "step": 5,
+                "name": "双平台模拟运行",
+                "status": status_str,
+                "metadata": {
+                    "total_rounds_executed": len(rounds_list),
+                    "total_actions": total_actions,
+                    "twitter_enabled": state.enable_twitter,
+                    "reddit_enabled": state.enable_reddit,
+                    "by_platform": platform_totals,
+                    "current_run_started_at": latest_start_ts or state.created_at,
+                    "simulation_created_at": state.created_at,
+                    "updated_at": state.updated_at,
+                },
+            },
+        ]
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "simulation": {
+                    "simulation_id": state.simulation_id,
+                    "project_id": state.project_id,
+                    "graph_id": state.graph_id,
+                    "status": status_str,
+                    "enable_twitter": state.enable_twitter,
+                    "enable_reddit": state.enable_reddit,
+                    "entities_count": state.entities_count,
+                    "profiles_count": state.profiles_count,
+                    "created_at": state.created_at,
+                    "updated_at": state.updated_at,
+                },
+                "project": project_info,
+                "workflow": workflow,
+                "config": {
+                    "time_config": time_config,
+                    "event_config": {
+                        "initial_posts": event_config.get("initial_posts", []),
+                        "events": event_config.get("events", []),
+                    },
+                    "agent_configs_count": len(agent_configs),
+                },
+                "agents": agents,
+                "rounds": rounds_list,
+                "aggregate": {
+                    "total_actions": total_actions,
+                    "rounds_with_actions": len(rounds_list),
+                    "action_type_distribution": action_type_dist,
+                    "platform_totals": platform_totals,
+                    "top_agents": top_agents,
+                },
+            },
+        })
+
+    except Exception as e:
+        logger.error(f"获取回放数据失败: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e),

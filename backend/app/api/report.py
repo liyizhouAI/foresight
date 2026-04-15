@@ -48,8 +48,12 @@ def generate_report():
         }
     """
     try:
+        # token 追踪：报告生成阶段
+        from ..utils import token_tracker
+        token_tracker.set_stage("step5_report")
+
         data = request.get_json() or {}
-        
+
         simulation_id = data.get('simulation_id')
         if not simulation_id:
             return jsonify({

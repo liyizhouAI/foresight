@@ -60,8 +60,21 @@ class LLMClient:
         
         if response_format:
             kwargs["response_format"] = response_format
-        
+
         response = self.client.chat.completions.create(**kwargs)
+        # Token 追踪（v0.3 新增）：记录每次调用的 token 消耗，按当前 stage 归类
+        try:
+            from . import token_tracker
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                token_tracker.record_usage(
+                    model=self.model,
+                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                )
+        except Exception:
+            pass  # 永不阻塞主流程
+
         content = response.choices[0].message.content
         # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
