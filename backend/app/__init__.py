@@ -47,6 +47,13 @@ def create_app(config_class=Config):
     SimulationRunner.register_cleanup()
     if should_log_startup:
         logger.info("已注册模拟进程清理函数")
+
+    # 启动时恢复卡在 "preparing" 状态的模拟
+    from .services.simulation_manager import SimulationManager, SimulationStatus
+    try:
+        SimulationManager.recover_stuck_preparations()
+    except Exception as e:
+        logger.warning(f"恢复卡住的准备任务失败（非致命）: {e}")
     
     # 请求日志中间件
     @app.before_request

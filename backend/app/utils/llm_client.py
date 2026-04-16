@@ -163,5 +163,115 @@ class LLMClient:
         try:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
-            raise ValueError(f"LLM返回的JSON格式无效: {cleaned_response}")
+            # 尝试修复截断的 JSON（LLM 输出被 max_tokens 截断时常见）
+            repaired = self._repair_truncated_json(cleaned_response)
+            if repaired is not None:
+                logger.warning("LLM JSON 解析失败，但修复截断后成功")
+                return repaired
+            raise ValueError(f"LLM返回的JSON格式无效: {cleaned_response[:500]}")
+
+    @staticmethod
+    def _repair_truncated_json(text: str) -> Optional[Dict[str, Any]]:
+        """
+        尝试修复被截断的 JSON：
+        1. 找到最内层的完整对象/数组，闭合外层括号
+        2. 移除末尾不完整的键值对/元素
+        """
+        # 移除尾部不完整的字符串（引号未闭合）
+        # 找到最后一个完整的值结束位置
+        repaired = text.rstrip()
+
+        # 策略：逐步回退到最近的有效 JSON 结构
+        # 1. 移除末尾的逗号和空白
+        repaired = re.sub(r'[,\s]+$', '', repaired)
+
+        # 2. 如果有未闭合的字符串（奇数引号），截断到最后一个完整值
+        #    向前找最后一个完整 key:value 或 数组元素 的结束位置
+        for trim_pattern in [
+            r',\s*"[^"]*$',           # 末尾是不完整的 key
+            r',\s*"[^"]*":\s*$',      # 末尾是 key: 但无值
+            r',\s*"[^"]*":\s*"[^"]*$', # 末尾是不完整的字符串值
+            r',\s*\{$',               # 末尾是空对象开始
+            r',\s*\[$',               # 末尾是空数组开始
+            r',\s*"[^"]*":\s*\[[^\]]*$', # 末尾是不完整的数组
+        ]:
+            new_repaired = re.sub(trim_pattern + r'\s*', '', repaired)
+            if new_repaired != repaired:
+                repaired = new_repaired
+
+        # 3. 闭合所有未闭合的括号
+        stack = []
+        i = 0
+        in_string = False
+        escape_next = False
+        while i < len(repaired):
+            ch = repaired[i]
+            if escape_next:
+                escape_next = False
+            elif ch == '\\' and in_string:
+                escape_next = True
+            elif ch == '"' and not escape_next:
+                in_string = not in_string
+            elif not in_string:
+                if ch in '{[':
+                    stack.append(ch)
+                elif ch == '}':
+                    if stack and stack[-1] == '{':
+                        stack.pop()
+                elif ch == ']':
+                    if stack and stack[-1] == '[':
+                        stack.pop()
+            i += 1
+
+        # 闭合剩余的括号（逆序）
+        for bracket in reversed(stack):
+            if bracket == '{':
+                repaired += '}'
+            elif bracket == '[':
+                repaired += ']'
+
+        try:
+            result = json.loads(repaired)
+            # 只接受 dict 结果（本体生成期望 dict）
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+        # 最后尝试：找到第一个完整的顶层 JSON 对象
+        depth = 0
+        best_end = -1
+        in_str = False
+        esc = False
+        for idx, ch in enumerate(text):
+            if esc:
+                esc = False
+                continue
+            if ch == '\\' and in_str:
+                esc = True
+                continue
+            if ch == '"' and not esc:
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                if depth == 0:
+                    best_end = -1  # reset
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    best_end = idx
+                    break  # 第一个完整顶层对象
+
+        if best_end > 0:
+            try:
+                candidate = json.loads(text[:best_end + 1])
+                if isinstance(candidate, dict):
+                    return candidate
+            except json.JSONDecodeError:
+                pass
+
+        return None
 

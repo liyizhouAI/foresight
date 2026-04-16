@@ -349,6 +349,7 @@
     "prepareStarted": "准备任务已启动，请通过 /api/simulation/prepare/status 查询进度",
     "alreadyPrepared": "已有完成的准备工作，无需重复生成",
     "notStartedPrepare": "尚未开始准备，请调用 /api/simulation/prepare 开始",
+    "preparing": "模拟环境准备中，请稍候...",
     "taskCompletedPrepared": "任务已完成（准备工作已存在）",
     "requireTaskOrSimId": "请提供 task_id 或 simulation_id",
     "configNotFound": "模拟配置不存在，请先调用 /prepare 接口",

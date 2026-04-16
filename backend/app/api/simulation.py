@@ -430,7 +430,7 @@ def prepare_simulation():
         # 检查是否强制重新生成
         force_regenerate = data.get('force_regenerate', False)
         logger.info(f"开始处理 /prepare 请求: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
-        
+
         # 检查是否已经准备完成（避免重复生成）
         if not force_regenerate:
             logger.debug(f"检查模拟 {simulation_id} 是否已准备完成...")
@@ -448,8 +448,23 @@ def prepare_simulation():
                         "prepare_info": prepare_info
                     }
                 })
-            else:
-                logger.info(f"模拟 {simulation_id} 未准备完成，将启动准备任务")
+
+            # 检查是否正在准备中（避免并发准备）
+            if state.status == SimulationStatus.PREPARING:
+                logger.info(f"模拟 {simulation_id} 正在准备中，返回进行中状态")
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "status": "preparing",
+                        "message": t('api.preparing'),
+                        "already_prepared": False,
+                        "profiles_count": state.profiles_count,
+                        "entities_count": state.entities_count
+                    }
+                })
+
+            logger.info(f"模拟 {simulation_id} 未准备完成，将启动准备任务")
         
         # 从项目获取必要信息
         project = ProjectManager.get_project(state.project_id)
@@ -744,10 +759,26 @@ def get_prepare_status():
                     }
                 })
         
-        # 如果没有task_id，返回错误
+        # 如果没有task_id，检查模拟状态
         if not task_id:
             if simulation_id:
-                # 有simulation_id但未准备完成
+                # 检查模拟当前状态
+                sim_state = SimulationManager().get_simulation(simulation_id)
+                if sim_state and sim_state.status == SimulationStatus.PREPARING:
+                    # 模拟正在准备中（可能是页面刷新丢失了task_id）
+                    return jsonify({
+                        "success": True,
+                        "data": {
+                            "simulation_id": simulation_id,
+                            "status": "preparing",
+                            "progress": -1,  # -1 表示进度未知
+                            "message": t('api.preparing'),
+                            "already_prepared": False,
+                            "profiles_count": sim_state.profiles_count,
+                            "entities_count": sim_state.entities_count
+                        }
+                    })
+                # 未准备完成且不在准备中
                 return jsonify({
                     "success": True,
                     "data": {

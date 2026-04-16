@@ -807,7 +807,18 @@ const startPrepareSimulation = async () => {
         await loadPreparedData()
         return
       }
-      
+
+      // 模拟正在准备中（页面刷新或并发请求）
+      if (res.data.status === 'preparing' && !res.data.task_id) {
+        addLog(t('log.preparingInprogress') || '模拟环境正在准备中，开始监控进度...')
+        if (res.data.entities_count) {
+          expectedTotal.value = res.data.entities_count
+        }
+        startPolling()
+        startProfilesPolling()
+        return
+      }
+
       taskId.value = res.data.task_id
       addLog(t('log.prepareTaskStarted'))
       addLog(t('log.prepareTaskId', { taskId: res.data.task_id }))

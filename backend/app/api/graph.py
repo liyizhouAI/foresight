@@ -250,13 +250,20 @@ def generate_ontology():
                 "total_text_length": project.total_text_length
             }
         })
-        
+
     except Exception as e:
+        # 区分 429 限流和其他错误
+        err_str = str(e)
+        is_rate_limit = any(kw in err_str.lower() for kw in ['429', 'rate limit', '速率限制', '1302', 'too many'])
+        status_code = 429 if is_rate_limit else 500
+
+        logger.error(f"本体生成失败: {type(e).__name__}: {err_str[:300]}")
         return jsonify({
             "success": False,
-            "error": str(e),
+            "error": "LLM 限流，请等待 1-2 分钟后重试" if is_rate_limit else str(e),
+            "error_type": "rate_limit" if is_rate_limit else "server_error",
             "traceback": traceback.format_exc()
-        }), 500
+        }), status_code
 
 
 # ============== 接口2：构建图谱 ==============

@@ -212,8 +212,10 @@ class SimulationConfigGenerator:
     
     # 上下文最大字符数
     MAX_CONTEXT_LENGTH = 50000
-    # 每批生成的Agent数量
-    AGENTS_PER_BATCH = 15
+    # 每批生成的Agent数量（增大以减少LLM调用次数）
+    AGENTS_PER_BATCH = 30
+    # 并行生成Agent配置的线程数（加速配置生成）
+    MAX_PARALLEL_BATCHES = 3
     
     # 各步骤的上下文截断长度（字符数）
     TIME_CONFIG_CONTEXT_LENGTH = 10000   # 时间配置
@@ -305,25 +307,58 @@ class SimulationConfigGenerator:
         event_config = self._parse_event_config(event_config_result)
         reasoning_parts.append(f"{t('progress.eventConfigLabel')}: {event_config_result.get('reasoning', t('common.success'))}")
         
-        # ========== 步骤3-N: 分批生成Agent配置 ==========
+        # ========== 步骤3-N: 分批生成Agent配置（并行加速） ==========
         all_agent_configs = []
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * self.AGENTS_PER_BATCH
-            end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
-            batch_entities = entities[start_idx:end_idx]
-            
-            report_progress(
-                3 + batch_idx,
-                t('progress.generatingAgentConfig', start=start_idx + 1, end=end_idx, total=len(entities))
-            )
-            
-            batch_configs = self._generate_agent_configs_batch(
-                context=context,
-                entities=batch_entities,
-                start_idx=start_idx,
-                simulation_requirement=simulation_requirement
-            )
-            all_agent_configs.extend(batch_configs)
+
+        if num_batches <= 1 or len(entities) <= self.AGENTS_PER_BATCH:
+            # 单批次，直接串行
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * self.AGENTS_PER_BATCH
+                end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
+                batch_entities = entities[start_idx:end_idx]
+                report_progress(
+                    3 + batch_idx,
+                    t('progress.generatingAgentConfig', start=start_idx + 1, end=end_idx, total=len(entities))
+                )
+                batch_configs = self._generate_agent_configs_batch(
+                    context=context,
+                    entities=batch_entities,
+                    start_idx=start_idx,
+                    simulation_requirement=simulation_requirement
+                )
+                all_agent_configs.extend(batch_configs)
+        else:
+            # 多批次并行生成，加速配置生成
+            import concurrent.futures
+
+            def _gen_batch(batch_idx):
+                s = batch_idx * self.AGENTS_PER_BATCH
+                e = min(s + self.AGENTS_PER_BATCH, len(entities))
+                be = entities[s:e]
+                report_progress(
+                    3 + batch_idx,
+                    t('progress.generatingAgentConfig', start=s + 1, end=e, total=len(entities))
+                )
+                return s, self._generate_agent_configs_batch(
+                    context=context,
+                    entities=be,
+                    start_idx=s,
+                    simulation_requirement=simulation_requirement
+                )
+
+            # 分组并行：每 MAX_PARALLEL_BATCHES 个一批
+            batch_results = {}
+            for group_start in range(0, num_batches, self.MAX_PARALLEL_BATCHES):
+                group_end = min(group_start + self.MAX_PARALLEL_BATCHES, num_batches)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.MAX_PARALLEL_BATCHES) as executor:
+                    futures = {executor.submit(_gen_batch, bi): bi for bi in range(group_start, group_end)}
+                    for future in concurrent.futures.as_completed(futures):
+                        idx, configs = future.result()
+                        batch_results[idx] = configs
+
+            # 按 batch 顺序组装结果
+            for idx in sorted(batch_results.keys()):
+                all_agent_configs.extend(batch_results[idx])
         
         reasoning_parts.append(t('progress.agentConfigResult', count=len(all_agent_configs)))
         

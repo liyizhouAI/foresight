@@ -32,6 +32,10 @@ OASIS 双平台并行模拟预设脚本
 import sys
 import os
 
+# Force HuggingFace offline mode - model already cached locally
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+
 if sys.platform == 'win32':
     # 设置 Python 默认 I/O 编码为 UTF-8
     # 这会影响所有未指定编码的 open() 调用

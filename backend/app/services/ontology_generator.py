@@ -225,12 +225,16 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
         
+        # max_tokens: 本体 JSON（10 实体 + 10 关系 + 属性）需要较大输出空间
+        # Qwen 32B 尤其需要更大余量，避免截断
+        ontology_max_tokens = 8192
+
         # 调用 LLM（主 LLM 重试 5 次全失败后，自动降级到 fallback）
         try:
             result = self.llm_client.chat_json(
                 messages=messages,
                 temperature=0.3,
-                max_tokens=4096
+                max_tokens=ontology_max_tokens
             )
         except Exception as primary_err:
             if not self._fallback_llm:
@@ -242,7 +246,7 @@ class OntologyGenerator:
             result = self._fallback_llm.chat_json(
                 messages=messages,
                 temperature=0.3,
-                max_tokens=4096
+                max_tokens=ontology_max_tokens
             )
         
         # 验证和后处理

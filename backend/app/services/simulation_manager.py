@@ -144,6 +144,45 @@ class SimulationManager:
     def clear_accelerate(cls, simulation_id: str) -> None:
         cls._accelerate_flags.pop(simulation_id, None)
 
+    @classmethod
+    def recover_stuck_preparations(cls) -> None:
+        """启动时恢复卡在 'preparing' 状态的模拟（Flask 重启导致后台线程丢失）"""
+        logger.info("检查卡住的准备任务...")
+        data_dir = os.path.join(
+            os.path.dirname(__file__),
+            '../../uploads/simulations'
+        )
+        if not os.path.exists(data_dir):
+            return
+
+        recovered = 0
+        for sim_dir_name in os.listdir(data_dir):
+            sim_dir = os.path.join(data_dir, sim_dir_name)
+            state_file = os.path.join(sim_dir, "state.json")
+            if not os.path.isdir(sim_dir) or not os.path.exists(state_file):
+                continue
+
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                if data.get("status") == "preparing":
+                    # 卡在 preparing 状态，重置为 created
+                    data["status"] = "created"
+                    data["error"] = "准备任务因服务重启而中断，请重新准备"
+                    data["updated_at"] = datetime.now().isoformat()
+                    with open(state_file, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    logger.info(f"已重置卡住的准备任务: {sim_dir_name} -> created")
+                    recovered += 1
+            except Exception as e:
+                logger.warning(f"恢复准备任务失败 {sim_dir_name}: {e}")
+
+        if recovered > 0:
+            logger.info(f"共恢复 {recovered} 个卡住的准备任务")
+        else:
+            logger.info("没有卡住的准备任务")
+
     def __init__(self):
         # 确保目录存在
         os.makedirs(self.SIMULATION_DATA_DIR, exist_ok=True)

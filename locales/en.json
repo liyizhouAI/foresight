@@ -349,6 +349,7 @@
     "prepareStarted": "Preparation task started. Query progress via /api/simulation/prepare/status.",
     "alreadyPrepared": "Preparation already complete. No need to regenerate.",
     "notStartedPrepare": "Preparation not started. Please call /api/simulation/prepare.",
+    "preparing": "Simulation environment is being prepared, please wait...",
     "taskCompletedPrepared": "Task completed (preparation already exists)",
     "requireTaskOrSimId": "Please provide task_id or simulation_id",
     "configNotFound": "Simulation config not found. Please call /prepare first.",
