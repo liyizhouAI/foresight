@@ -1132,6 +1132,7 @@ async def run_twitter_simulation(
     
     # Twitter 使用通用 LLM 配置
     model = create_model(config, use_boost=False)
+    simulation_semaphore = int(os.environ.get("SIMULATION_SEMAPHORE", "50"))
     
     # OASIS Twitter使用CSV格式
     profile_path = os.path.join(simulation_dir, "twitter_profiles.csv")
@@ -1160,7 +1161,7 @@ async def run_twitter_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.TWITTER,
         database_path=db_path,
-        semaphore=30,  # 限制最大并发 LLM 请求数，防止 API 过载（GLM RPM 友好值）
+        semaphore=simulation_semaphore,  # 可通过 SIMULATION_SEMAPHORE 环境变量调整
     )
     
     await result.env.reset()
@@ -1321,9 +1322,10 @@ async def run_reddit_simulation(
         print(f"[Reddit] {msg}")
     
     log_info("初始化...")
-    
+
     # Reddit 使用加速 LLM 配置（如果有的话，否则回退到通用配置）
     model = create_model(config, use_boost=True)
+    reddit_semaphore = int(os.environ.get("SIMULATION_SEMAPHORE", "50"))
     
     profile_path = os.path.join(simulation_dir, "reddit_profiles.json")
     if not os.path.exists(profile_path):
@@ -1351,7 +1353,7 @@ async def run_reddit_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.REDDIT,
         database_path=db_path,
-        semaphore=30,  # 限制最大并发 LLM 请求数，防止 API 过载（GLM RPM 友好值）
+        semaphore=reddit_semaphore,  # 可通过 SIMULATION_SEMAPHORE 环境变量调整
     )
     
     await result.env.reset()

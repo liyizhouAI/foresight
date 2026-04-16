@@ -293,7 +293,24 @@ class SimulationConfigGenerator:
         )
         
         reasoning_parts = []
-        
+
+        # ========== 预过滤：排除非社交实体 ==========
+        NON_SOCIAL_ENTITY_TYPES = {
+            'API', 'SDK', 'Database', 'WebServer', 'CloudService', 'CloudProvider',
+            'Table', 'Module', 'ManagementBackend', 'SecurityMeasure', 'Condition',
+            'PaymentTime', 'RiskLevel', 'CurrentStatus', 'Order', 'OrderDetail',
+            'EnrollmentInfo', 'Software', 'Technology', 'ProcessManager', 'WebPage',
+        }
+        original_count = len(entities)
+        entities = [e for e in entities
+                    if e.entity_type not in NON_SOCIAL_ENTITY_TYPES
+                    and not any(kw in e.name for kw in ['GET /', 'POST /', 'PUT /', 'DELETE /', 'HTTPS API', 'JSAPI', 'INDEX(', 'Bearer token', 'Header（', 'Hero（'])]
+        filtered_count = original_count - len(entities)
+        if filtered_count > 0:
+            logger.info(f"过滤非社交实体: {original_count} → {len(entities)} (排除 {filtered_count} 个技术/API实体)")
+            num_batches = math.ceil(len(entities) / self.AGENTS_PER_BATCH)
+            total_steps = 3 + num_batches
+
         # ========== 步骤1: 生成时间配置 ==========
         report_progress(1, t('progress.generatingTimeConfig'))
         num_entities = len(entities)
