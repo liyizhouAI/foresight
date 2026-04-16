@@ -1,6 +1,6 @@
 # Foresight 先见之明 — 产品需求文档 (PRD)
 
-> **版本**：v0.3.1 — 2026-04-15 生产链路打通
+> **版本**：v0.3.3 — 2026-04-16 CustomGraphBuilder + 一键部署 + CDN SPA 修复
 > **基线**：基于 [MiroFish](https://github.com/666ghj/MiroFish) v0.1.2 二次开发，已大量重构。
 
 ---
@@ -77,10 +77,10 @@
               │     用途：本体、画像、配置、报告、模拟决策
               │     Endpoint：https://open.bigmodel.cn/api/paas/v4/
               │
-              ├── Knowledge Graph：Graphiti + Neo4j （之前用 Zep Cloud，已弃）
+              ├── Knowledge Graph：CustomGraphBuilder + Neo4j（v0.3.2 替代 Graphiti）
               │     部署：Docker 容器 neo4j:5.26-community
-              │     Embedding：BAAI/bge-m3 via SiliconFlow
-              │     Graphiti LLM：Qwen2.5-32B via SiliconFlow
+              │     图谱构建 LLM：GLM-4-Flash（同主 LLM，自带 retry + fallback）
+              │     Embedding：BAAI/bge-m3 via SiliconFlow（仅下游检索用）
               │
               ├── HF Hub Mirror：hf-mirror.com      OASIS 推荐模型 twhin-bert-base
               │
@@ -93,8 +93,9 @@
 
 | 决策点 | 当前选择 | 弃用方案 | 原因 |
 |---|---|---|---|
-| LLM | 智谱 GLM-4-Flash | MiniMax M2.7 / GPT-4o-mini | Flash 单次延迟 0.5-1s，是 OASIS 高吞吐场景的最优解 |
-| 知识图谱 | Graphiti + 自托管 Neo4j | Zep Cloud | 摆脱外部依赖、可控、免月费 |
+| LLM | 智谱 GLM-4-Flash | MiniMax M2.7 / GPT-4o-mini | Flash 单次延迟 0.5-1s，128K context |
+| 图谱构建 | **CustomGraphBuilder**（自研） | Graphiti + Qwen/GLM | Graphiti 与非 OpenAI LLM 兼容性黑洞（详见附录 C） |
+| 知识图谱存储 | 自托管 Neo4j | Zep Cloud | 摆脱外部依赖、可控、免月费 |
 | Python | 3.11（uv 管理） | 系统 3.12 | camel-oasis<3.12 不兼容 3.12 |
 | 包源 | 腾讯云 PyPI 镜像 | 直连 PyPI | 国内服务器直连慢 100x |
 | HF 模型源 | hf-mirror.com | huggingface.co | 国内服务器连不上 hf 主站 |
@@ -449,6 +450,39 @@ FLASK_DEBUG=False
 
 ## 8. v0.3 当前状态与已交付
 
+### v0.3.3（2026-04-16 CustomGraphBuilder + 一键部署 + CDN 修复）
+
+- [x] **CustomGraphBuilder 替代 Graphiti**（v0.3.2 核心交付）
+  - 完全自研的图谱构建器，不依赖 graphiti-core 库
+  - 每 chunk 单次 LLM 调用（Graphiti 需要 4-5 次）→ 速度 4-5x
+  - ThreadPoolExecutor 10 并发 → 194 chunks 从 10 分钟降到 ~2 分钟
+  - 直接用 cypher MERGE 写 Neo4j → 无 Graphiti 嵌套 dict / context overflow 等兼容性问题
+  - 使用 Foresight LLMClient 自带 retry + fallback + token tracker
+  - 下游 `get_all_nodes / get_all_edges / filter_defined_entities` 完全兼容
+  - 文件：`backend/app/services/custom_graph_builder.py`
+
+- [x] **一键部署脚本** `scripts/deploy.sh`
+  - `--backend`：rsync → 语法检查 → kill/restart Flask → health verify
+  - `--frontend`：vite build → coscmd upload → tccli CDN purge
+  - `--full`：两个都做
+  - `--dry-run`：预演
+  - 处理路径空格 / sudo rsync / Flask 存活检查
+
+- [x] **CDN SPA 路由 fallback**
+  - 问题：Vue Router history 模式，COS 上子路径全部 404
+  - 修复：`tccli cdn UpdateDomainConfig` 设置 404 → 302 跳转 `/index.html`
+  - 永久配置，deploy.sh 不需要每次重新设
+
+- [x] **前端首次正式部署到腾讯云 COS**
+  - `coscmd upload -r dist/ /` → bucket `foresight-1317962478`
+  - CDN purge → `tccli cdn PurgePathCache`
+  - 包含 v0.3 所有前端改动（replay UI / 加速完成按钮 / 路由修复）
+
+- [x] **Graphiti 兼容层保留**
+  - graphiti_client.py 中的 5 层 monkey-patch 保留（driver / reranker / embedder / EntityNode / bulk_utils）
+  - 这些只影响旧 Graphiti 代码路径（add_episode / add_episodes_batch）
+  - 新 CustomGraphBuilder 完全绕过，不受影响
+
 ### v0.3.1 hotfix（2026-04-15 生产链路打通）
 
 经过一次完整的端到端测试，修复了 7 个阻塞生产跑通的 bug：
@@ -606,7 +640,99 @@ FLASK_DEBUG=False
 | 2026-04-15 | 200 agents 设为甜点 | 8G 容量 + 95% 置信度足够 |
 | 2026-04-15 | 上线 Manus 式 replay UI | 给客户演示 + 复盘工具 |
 | 2026-04-15 | v0.4 路线图：国内平台 + SaaS | 用户战略需求 |
+| 2026-04-16 | v0.3.3 CustomGraphBuilder 替代 Graphiti | Graphiti 兼容性死循环，10+ 次 patch 仍无法稳定 |
+| 2026-04-16 | 一键部署脚本 deploy.sh | 手动 scp 反复漏文件，accelerate 方法都没部署上 |
+| 2026-04-16 | CDN SPA fallback 404→302 | coscmd 部署后前端所有子路由 404 |
+| 2026-04-16 | 图谱构建并发化 (10 workers) | 串行太慢（10 分钟 → 2 分钟） |
 | 2026-04-15 | v0.3.1 hotfix：7 个 bug 修复 | 第一次完整 E2E 跑通压力测试 |
 | 2026-04-15 | LLM client 加指数退避重试 + 双 LLM fallback | GLM RPM 配额低，retry 不够兜底 |
 | 2026-04-15 | Replay UI 重构为 Manus cinematic 风格 | 三栏分析面板对客户演示不够"沉浸" |
 | 2026-04-15 | semaphore 100 → 30 | 高并发触发 GLM 限流雪崩 |
+
+## 附录 C：Graphiti 弃用记录
+
+v0.3.2 决定用自研 CustomGraphBuilder 替代 Graphiti。以下是尝试修复 Graphiti 兼容性的完整过程。
+
+### 尝试过的 10 次 Patch
+
+| # | 问题 | Patch 位置 | 结果 |
+|---|---|---|---|
+| 1 | Qwen 32B 32K context 超窗口 | ontology_generator MAX_TEXT=28000 | ✅ 但这不是主问题 |
+| 2 | Neo4j TypeError 嵌套 dict | EntityNode.save monkey-patch | ❌ Graphiti 不走这条路径 |
+| 3 | 同上 | bulk_utils.add_nodes_and_edges_bulk_tx | ❌ 也不走这条路径 |
+| 4 | 同上 | neo4j AsyncSession.run driver 层 | ✅ 终于拦到了 |
+| 5 | Qwen 累积上下文爆 60-82K | chunk_size 500→250 | ❌ 爆的是检索上下文不是 chunk |
+| 6 | 同上 | 换 Qwen 72B（以为 128K） | ❌ SiliconFlow 72B 也是 32K |
+| 7 | 同上 | 换智谱 GLM-4-Flash 128K | ❌ GLM 20015 "parameter invalid" |
+| 8 | GLM reranker logprobs 不支持 | patch reranker.rank() | ✅ 但不是主路径 |
+| 9 | GLM embedder 空 input | patch embedder.create_batch() | ✅ 但不是主路径 |
+| 10 | GLM extract_nodes 全部 fail | 未找到根因 | ❌ 直接测能过、生产必挂 |
+
+### 为什么自研是正确决策
+
+1. **Graphiti 为 OpenAI 设计**：内部 4-5 次 LLM 调用路径各自有 OpenAI 特有参数（logprobs / structured output / json_schema），非 OpenAI provider 每条路径都是独立陷阱
+2. **patch 层次太深**：至少 5 层（EntityNode / bulk_utils / driver / reranker / embedder），每层 fix 一个又冒下一个
+3. **上下文累积不可控**：Graphiti 的 episode 检索机制会从已有图谱拉上下文，后续 episode prompt 越来越长，32K 模型必爆，128K 模型也不是免费的
+4. **每 chunk 4-5 次 LLM 调用**：extract_nodes + dedupe_nodes + extract_edges + dedupe_edges + community_summary，成本和延迟 4-5x
+5. **CustomGraphBuilder 只需 1 次调用/chunk**：直接 prompt → JSON → cypher MERGE，完全受控
+
+### CustomGraphBuilder 架构
+
+```
+输入: 完整文档文本 + ontology 定义
+  ↓
+字符级切分 (250 chars, 50 overlap)
+  ↓
+ThreadPoolExecutor (10 workers 并发)
+  ↓ 每个 worker:
+  LLMClient.chat_json(extract prompt)  ← 一次调用，自带 retry + fallback
+  ↓ 返回:
+  {"entities": [...], "relationships": [...]}
+  ↓
+串行 MERGE 到 Neo4j (去重 by name + group_id)
+  ↓
+输出: {entities_count, edges_count, chunks_processed}
+```
+
+### 保留的 Graphiti 代码
+
+`graphiti_client.py` 中的读取方法（`get_all_nodes / get_all_edges / get_node / get_node_edges`）仍然使用 Neo4j 直接查询，**不依赖 Graphiti 库**。`add_episode / add_episodes_batch` 保留但不再被主流水线调用。5 层 monkey-patch 保留作为安全网。
+
+## 附录 D：部署流程
+
+### 后端部署（最常用）
+
+```bash
+./scripts/deploy.sh              # rsync + restart Flask + health verify
+./scripts/deploy.sh --no-restart  # 只同步代码不重启
+```
+
+### 前端部署
+
+```bash
+./scripts/deploy.sh --frontend    # vite build + coscmd upload + CDN purge
+```
+
+### 全量部署
+
+```bash
+./scripts/deploy.sh --full        # 后端 + 前端
+```
+
+### CDN SPA 配置（一次性）
+
+```bash
+tccli cdn UpdateDomainConfig --cli-unfold-argument \
+  --Domain foresight.yizhou.chat \
+  --ErrorPage.Switch on \
+  --ErrorPage.PageRules.0.StatusCode 404 \
+  --ErrorPage.PageRules.0.RedirectCode 302 \
+  --ErrorPage.PageRules.0.RedirectUrl "https://foresight.yizhou.chat/index.html"
+```
+
+### COS 配置
+
+- Bucket: `foresight-1317962478`
+- Region: `ap-guangzhou`
+- 凭证: `~/.cos.conf`（SecretId/SecretKey）
+- 工具: `coscmd`（pip install）

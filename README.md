@@ -85,7 +85,7 @@ Click the image to watch Foresight's deep prediction of the lost ending based on
 
 ## 🔄 Workflow
 
-1. **Graph Building**: Seed extraction & Individual/collective memory injection & GraphRAG construction (Graphiti + Neo4j)
+1. **Graph Building**: Seed extraction & LLM entity/relationship extraction & Neo4j storage (v0.3.2 custom builder with 10x concurrent extraction, replacing Graphiti)
 2. **Environment Setup**: Entity relationship extraction & Persona generation & Agent configuration injection (with "Skip & Continue" button)
 3. **Simulation**: Dual-platform parallel simulation (Twitter + Reddit) & Auto-parse prediction requirements & Dynamic temporal memory updates
 4. **Report Generation**: ReportAgent with rich toolset for deep interaction with post-simulation environment
