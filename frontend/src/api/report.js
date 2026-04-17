@@ -77,3 +77,11 @@ export const getReportBySimulation = (simulationId) => {
 export const checkReportBySimulation = (simulationId) => {
   return service.get(`/api/report/check/${simulationId}`);
 };
+
+/**
+ * 获取报告信息图数据
+ * @param {string} reportId
+ */
+export const getReportInfographic = (reportId) => {
+  return service.get(`/api/report/${reportId}/infographic`);
+};

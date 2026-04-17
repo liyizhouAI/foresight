@@ -16,6 +16,12 @@
             <div class="header-divider"></div>
           </div>
 
+          <!-- Infographic Dashboard -->
+          <ReportInfographic
+            v-if="infographicData"
+            :data="infographicData"
+          />
+
           <!-- Sections List -->
           <div class="sections-list">
             <div 
@@ -393,7 +399,8 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog } from '../api/report'
+import { getAgentLog, getConsoleLog, getReportInfographic } from '../api/report'
+import ReportInfographic from './ReportInfographic.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -426,6 +433,7 @@ const expandedLogs = ref(new Set())
 const collapsedSections = ref(new Set())
 const isComplete = ref(false)
 const startTime = ref(null)
+const infographicData = ref(null)
 const leftPanel = ref(null)
 const rightPanel = ref(null)
 const logContent = ref(null)
@@ -2062,6 +2070,8 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'report_start') {
             startTime.value = new Date(log.timestamp)
+            // Fetch infographic data
+            fetchInfographicData()
           }
         })
         
@@ -2151,6 +2161,18 @@ const fetchConsoleLog = async () => {
     }
   } catch (err) {
     console.warn('Failed to fetch console log:', err)
+  }
+}
+
+const fetchInfographicData = async () => {
+  if (!props.reportId) return
+  try {
+    const res = await getReportInfographic(props.reportId)
+    if (res.success && res.data) {
+      infographicData.value = res.data
+    }
+  } catch (e) {
+    // Non-critical, silently ignore
   }
 }
 

@@ -10,7 +10,9 @@ from flask import request, jsonify, send_file
 
 from . import report_bp
 from ..config import Config
-from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
+from ..services.report_agent import ReportAgent
+from ..services.report_data import ReportManager, ReportStatus
+from ..services.simulation_analytics import SimulationAnalyticsService
 from ..services.simulation_manager import SimulationManager
 from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
@@ -1022,3 +1024,40 @@ def get_graph_statistics_tool():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+# ============== 信息图数据接口 ==============
+
+@report_bp.route('/<report_id>/infographic', methods=['GET'])
+def get_report_infographic(report_id: str):
+    """
+    获取报告的信息图仪表板数据
+
+    返回模拟行为统计数据，用于前端渲染信息图。
+    优先从报告文件夹读取缓存数据，如无则实时计算。
+    """
+    try:
+        cached = ReportManager.get_infographic(report_id)
+        if cached:
+            return jsonify({"success": True, "data": cached})
+
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": "Report not found",
+            }), 404
+
+        analytics = SimulationAnalyticsService()
+        data = analytics.get_infographic_data(report.simulation_id)
+
+        try:
+            ReportManager.save_infographic(report_id, data)
+        except Exception:
+            pass
+
+        return jsonify({"success": True, "data": data})
+
+    except Exception as e:
+        logger.error(f"获取信息图数据失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
