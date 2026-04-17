@@ -903,8 +903,12 @@ class ReportAgent:
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
         
-        self.llm = llm_client or LLMClient()
-        self.zep_tools = zep_tools or ZepToolsService()
+        self.llm = llm_client or LLMClient(
+            api_key=os.environ.get("REPORT_LLM_API_KEY") or None,
+            base_url=os.environ.get("REPORT_LLM_BASE_URL") or None,
+            model=os.environ.get("REPORT_LLM_MODEL_NAME") or None,
+        )
+        self.zep_tools = zep_tools or ZepToolsService(llm_client=self.llm)
         
         # 工具定义
         self.tools = self._define_tools()
