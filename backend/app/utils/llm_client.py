@@ -16,9 +16,9 @@ from ..config import Config
 logger = logging.getLogger('foresight.llm_client')
 
 # 重试配置（针对 429 / 5xx / 超时 / 连接错误）
-_MAX_RETRIES = 5
-_BASE_BACKOFF = 1.0  # 首次重试等 1s
-_MAX_BACKOFF = 30.0  # 单次最多等 30s
+_MAX_RETRIES = 8
+_BASE_BACKOFF = 2.0  # 首次重试等 2s
+_MAX_BACKOFF = 60.0  # 单次最多等 60s
 
 
 def _is_rate_limit_error(err: Exception) -> bool:

@@ -24,6 +24,7 @@
         </div>
       </div>
       <div class="header-right">
+        <div class="theme-toggle-slot" id="theme-toggle-anchor"></div>
         <button class="icon-btn" @click="toggleAnalyst" :title="analystMode ? '切换沉浸视图' : '切换分析视图'">
           {{ analystMode ? '◫' : '▦' }}
         </button>
@@ -964,4 +965,5 @@ onUnmounted(() => {
 .task-icon { color: #4CAF50; font-weight: 700; }
 .task-label { color: #E8E8E8; flex: 1; }
 .task-progress { color: #666; }
+.theme-toggle-slot { width: 18px; height: 18px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
 </style>

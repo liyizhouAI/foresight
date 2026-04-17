@@ -1684,7 +1684,12 @@ class ReportAgent:
                     )
 
                 logger.info(t('report.sectionSaved', reportId=report_id, sectionNum=f"{section_num:02d}"))
-                
+
+                # 章节间延迟，避免连续请求触发 LLM 速率限制
+                if section_num < total_sections:
+                    import time
+                    time.sleep(3)
+
                 # 更新进度
                 ReportManager.update_progress(
                     report_id, "generating", 

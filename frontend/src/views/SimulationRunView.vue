@@ -28,6 +28,7 @@
 
       <div class="header-right">
         <LanguageSwitcher />
+        <div class="theme-toggle-slot" id="theme-toggle-anchor"></div>
         <div class="step-divider"></div>
         <div class="workflow-step">
           <span class="step-num">Step 3/5</span>
@@ -453,6 +454,14 @@ onUnmounted(() => {
 
 .panel-wrapper.left {
   border-right: 1px solid #EAEAEA;
+}
+.theme-toggle-slot {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>
 
