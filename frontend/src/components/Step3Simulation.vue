@@ -526,6 +526,11 @@ const fetchRunStatus = async () => {
         phase.value = 2
         stopPolling()
         emit('update-status', 'completed')
+
+        // 模拟完成后自动触发报告生成
+        setTimeout(() => {
+          handleNextStep()
+        }, 1500)
       }
     }
   } catch (err) {
