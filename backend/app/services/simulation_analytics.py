@@ -58,7 +58,7 @@ class SimulationAnalyticsService:
                 platform_breakdown: {platform: count},
             }
         """
-        actions = SimulationRunner.get_all_actions(simulation_id, limit=50000)
+        actions = SimulationRunner.get_all_actions(simulation_id)
         if not actions:
             return self._empty_overview()
 
@@ -107,7 +107,7 @@ class SimulationAnalyticsService:
         Returns:
             [{agent_name, content, platform, round_num, engagement_count}]
         """
-        actions = SimulationRunner.get_all_actions(simulation_id, limit=50000)
+        actions = SimulationRunner.get_all_actions(simulation_id)
         if not actions:
             return []
 
@@ -162,7 +162,7 @@ class SimulationAnalyticsService:
                 random: [...],
             }
         """
-        actions = SimulationRunner.get_all_actions(simulation_id, limit=50000)
+        actions = SimulationRunner.get_all_actions(simulation_id)
         if not actions:
             return {'positive': [], 'negative': [], 'random': []}
 
@@ -223,7 +223,7 @@ class SimulationAnalyticsService:
                 by_round: [{round_num, twitter, reddit, total}],
             }
         """
-        actions = SimulationRunner.get_all_actions(simulation_id, limit=50000)
+        actions = SimulationRunner.get_all_actions(simulation_id)
         if not actions:
             return {'by_type': {}, 'by_platform': {}, 'by_round': []}
 
@@ -263,7 +263,7 @@ class SimulationAnalyticsService:
                 engagement_by_type: {type: count},
             }
         """
-        actions = SimulationRunner.get_all_actions(simulation_id, limit=50000)
+        actions = SimulationRunner.get_all_actions(simulation_id)
         if not actions:
             return {'total_engagement': 0, 'avg_engagement_per_post': 0, 'top_agents': [], 'engagement_by_type': {}}
 
@@ -299,7 +299,7 @@ class SimulationAnalyticsService:
         Returns:
             {positive_count, negative_count, neutral_count, positive_ratio, negative_ratio}
         """
-        actions = SimulationRunner.get_all_actions(simulation_id, limit=50000)
+        actions = SimulationRunner.get_all_actions(simulation_id)
         if not actions:
             return {'positive_count': 0, 'negative_count': 0, 'neutral_count': 0, 'positive_ratio': 0, 'negative_ratio': 0}
 
