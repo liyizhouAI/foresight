@@ -78,7 +78,7 @@ import GraphPanel from '../components/GraphPanel.vue'
 import Step4Report from '../components/Step4Report.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation } from '../api/simulation'
-import { getReport } from '../api/report'
+import { getReport, checkReportBySimulation } from '../api/report'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 
 const route = useRoute()
@@ -158,6 +158,16 @@ const loadReportData = async () => {
     if (reportRes.success && reportRes.data) {
       const reportData = reportRes.data
       simulationId.value = reportData.simulation_id
+
+      // 如果当前报告失败，自动查找该 simulation 的最新成功报告
+      if (reportData.status === 'failed' && simulationId.value) {
+        const checkRes = await checkReportBySimulation(simulationId.value)
+        if (checkRes.success && checkRes.data?.report_id && checkRes.data.report_id !== currentReportId.value) {
+          addLog(`Report failed, redirecting to newer report: ${checkRes.data.report_id}`)
+          router.replace({ name: 'Report', params: { reportId: checkRes.data.report_id } })
+          return
+        }
+      }
 
       if (simulationId.value) {
         // 获取 simulation 信息
